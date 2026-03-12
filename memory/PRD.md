@@ -154,7 +154,7 @@ Enhance the Ultimate Bookkeeping Firebase application with:
 ## Prioritized Backlog
 
 ### P0 (Next Up)
-- [ ] Feature 2: AI-powered insights/forecasting (advanced) - IN PROGRESS
+- [x] Feature 2: AI-powered insights/forecasting (advanced) - COMPLETED
 - [ ] Feature 3: Better reporting capabilities
 
 ### P1

@@ -831,12 +831,14 @@ export class EnhancedDashboard {
         const trendEl = document.getElementById('forecast-trend');
         
         try {
-            const response = await fetch(`${BACKEND_URL}/api/ai/forecast`, {
+            const response = await fetch(`${BACKEND_URL}/api/ai/forecast/advanced`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     historical_sales: this.state?.allSales || [],
-                    forecast_days: 30
+                    products_data: [],
+                    forecast_days: 30,
+                    include_product_forecast: false
                 })
             });
 
@@ -846,11 +848,20 @@ export class EnhancedDashboard {
             this.forecast = data;
 
             if (contentEl) {
+                const dailyAvg = data.predicted_daily_average || 0;
+                const periodTotal = dailyAvg * 30;
+                const wp = data.weekly_pattern || [];
+                const bestDay = wp.length ? wp.reduce((a, b) => a.multiplier > b.multiplier ? a : b) : null;
+
                 contentEl.innerHTML = `
-                    <div class="forecast-value">₵${this.formatNumber(data.predicted_daily_average || 0)}</div>
+                    <div class="forecast-value">₵${this.formatNumber(dailyAvg)}</div>
                     <div class="forecast-label">Predicted Daily Average (Next 30 Days)</div>
-                    <div style="margin-top: 0.75rem; font-size: 0.8rem; color: var(--text-muted);">
-                        Confidence: ${data.confidence || 'Medium'}
+                    <div style="margin-top: 0.5rem; font-size: 0.85rem; color: var(--text-secondary);">
+                        30-day total: ₵${this.formatNumber(periodTotal)}
+                    </div>
+                    <div style="margin-top: 0.25rem; font-size: 0.8rem; color: var(--text-muted);">
+                        Confidence: ${(data.confidence || 'Medium').charAt(0).toUpperCase() + (data.confidence || 'medium').slice(1)}
+                        ${bestDay ? ` · Best day: ${bestDay.day}` : ''}
                     </div>
                 `;
             }

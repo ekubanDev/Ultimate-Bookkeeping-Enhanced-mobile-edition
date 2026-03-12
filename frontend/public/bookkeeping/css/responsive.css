@@ -644,6 +644,19 @@
     .empty-state h3 {
         font-size: 1.2rem;
     }
+
+    /* Forecasting section responsive */
+    #forecasting #forecast-kpi-row {
+        grid-template-columns: 1fr 1fr !important;
+    }
+
+    #forecasting > div[style*="grid-template-columns: 1fr 1fr"] {
+        grid-template-columns: 1fr !important;
+    }
+
+    #product-forecast-table table {
+        min-width: 700px;
+    }
 }
 
 /* ==================== SMALL PHONES (320px-375px) ==================== */

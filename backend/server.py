@@ -8,7 +8,9 @@ from pathlib import Path
 from pydantic import BaseModel, Field, ConfigDict
 from typing import List, Optional, Dict, Any
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
+from collections import defaultdict
+import math
 
 import json
 from openai import AsyncOpenAI
@@ -91,6 +93,12 @@ class AIInsightsResponse(BaseModel):
 class ForecastRequest(BaseModel):
     historical_sales: List[Dict[str, Any]]
     forecast_days: int = 30
+
+class AdvancedForecastRequest(BaseModel):
+    historical_sales: List[Dict[str, Any]]
+    products_data: List[Dict[str, Any]] = []
+    forecast_days: int = 30
+    include_product_forecast: bool = False
 
 class StockAlertEmailRequest(BaseModel):
     products: List[Dict[str, Any]]
@@ -337,6 +345,251 @@ Provide a JSON response with:
     except Exception as e:
         logger.error(f"Forecast error: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to generate forecast: {str(e)}")
+
+def _linear_regression(xs: List[float], ys: List[float]):
+    """Least-squares linear regression. Returns (slope, intercept)."""
+    n = len(xs)
+    if n < 2:
+        return 0.0, (ys[0] if ys else 0.0)
+    sum_x = sum(xs)
+    sum_y = sum(ys)
+    sum_xy = sum(x * y for x, y in zip(xs, ys))
+    sum_x2 = sum(x * x for x in xs)
+    denom = n * sum_x2 - sum_x * sum_x
+    if abs(denom) < 1e-10:
+        return 0.0, sum_y / n
+    slope = (n * sum_xy - sum_x * sum_y) / denom
+    intercept = (sum_y - slope * sum_x) / n
+    return slope, intercept
+
+
+def _detect_day_of_week_pattern(daily_data: Dict[str, float]) -> Dict[int, float]:
+    """Returns multiplier per weekday (0=Mon .. 6=Sun) relative to overall average."""
+    weekday_totals = defaultdict(list)
+    for date_str, total in daily_data.items():
+        try:
+            dt = datetime.strptime(date_str[:10], "%Y-%m-%d")
+            weekday_totals[dt.weekday()].append(total)
+        except ValueError:
+            continue
+    if not weekday_totals:
+        return {}
+    overall_avg = sum(sum(v) for v in weekday_totals.values()) / sum(len(v) for v in weekday_totals.values())
+    if overall_avg < 1e-10:
+        return {}
+    pattern = {}
+    for wd, vals in weekday_totals.items():
+        day_avg = sum(vals) / len(vals)
+        pattern[wd] = day_avg / overall_avg
+    return pattern
+
+
+def _compute_forecast_series(daily_data: Dict[str, float], forecast_days: int):
+    """Generate day-by-day forecast with confidence intervals using linear regression + seasonal adjustment."""
+    sorted_dates = sorted(daily_data.keys())
+    if not sorted_dates:
+        return [], "stable", "low", []
+
+    values = [daily_data[d] for d in sorted_dates]
+    xs = list(range(len(values)))
+    slope, intercept = _linear_regression([float(x) for x in xs], values)
+
+    residuals = [values[i] - (slope * i + intercept) for i in range(len(values))]
+    std_dev = math.sqrt(sum(r * r for r in residuals) / max(1, len(residuals) - 2)) if len(residuals) > 2 else 0.0
+
+    dow_pattern = _detect_day_of_week_pattern(daily_data)
+
+    last_date_str = sorted_dates[-1]
+    try:
+        last_date = datetime.strptime(last_date_str[:10], "%Y-%m-%d")
+    except ValueError:
+        last_date = datetime.now()
+
+    forecast_series = []
+    n = len(values)
+    for i in range(1, forecast_days + 1):
+        future_date = last_date + timedelta(days=i)
+        trend_value = slope * (n + i - 1) + intercept
+        dow_mult = dow_pattern.get(future_date.weekday(), 1.0)
+        predicted = max(0, trend_value * dow_mult)
+        distance_factor = 1 + (i / forecast_days) * 0.5
+        margin = std_dev * 1.96 * distance_factor
+        forecast_series.append({
+            "date": future_date.strftime("%Y-%m-%d"),
+            "predicted": round(predicted, 2),
+            "lower_bound": round(max(0, predicted - margin), 2),
+            "upper_bound": round(predicted + margin, 2),
+        })
+
+    recent_7 = values[-7:] if len(values) >= 7 else values
+    older_7 = values[-14:-7] if len(values) >= 14 else values[:max(1, len(values) // 2)]
+    recent_avg = sum(recent_7) / len(recent_7) if recent_7 else 0
+    older_avg = sum(older_7) / len(older_7) if older_7 else recent_avg
+
+    if recent_avg > older_avg * 1.08:
+        trend = "up"
+    elif recent_avg < older_avg * 0.92:
+        trend = "down"
+    else:
+        trend = "stable"
+
+    data_points = len(values)
+    if data_points >= 30:
+        confidence = "high"
+    elif data_points >= 14:
+        confidence = "medium"
+    else:
+        confidence = "low"
+
+    factors = []
+    if slope > 0.5:
+        factors.append("Consistent upward sales trajectory")
+    elif slope < -0.5:
+        factors.append("Declining sales trend detected")
+    else:
+        factors.append("Relatively flat sales trend")
+
+    if dow_pattern:
+        best_day = max(dow_pattern, key=dow_pattern.get)
+        worst_day = min(dow_pattern, key=dow_pattern.get)
+        day_names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+        factors.append(f"Strongest sales day: {day_names[best_day]}")
+        factors.append(f"Weakest sales day: {day_names[worst_day]}")
+
+    if data_points < 14:
+        factors.append("Limited historical data — forecast will improve over time")
+
+    return forecast_series, trend, confidence, factors
+
+
+def _product_level_forecast(sales_data: List[Dict], products_data: List[Dict], forecast_days: int) -> List[Dict]:
+    """Forecast demand per product based on historical sales velocity."""
+    product_daily = defaultdict(lambda: defaultdict(float))
+    for sale in sales_data:
+        product = sale.get("product", "Unknown")
+        date = sale.get("date", "")[:10]
+        qty = sale.get("quantity", 0)
+        if date:
+            product_daily[product][date] += qty
+
+    forecasts = []
+    for prod_data in products_data:
+        name = prod_data.get("name", "")
+        current_stock = prod_data.get("quantity", 0)
+        min_stock = prod_data.get("minStock", 10)
+        cost = prod_data.get("cost", 0)
+        price = prod_data.get("price", 0)
+
+        daily = product_daily.get(name, {})
+        if not daily:
+            continue
+
+        sorted_dates = sorted(daily.keys())
+        total_qty = sum(daily.values())
+        span_days = max(1, (datetime.strptime(sorted_dates[-1][:10], "%Y-%m-%d") - datetime.strptime(sorted_dates[0][:10], "%Y-%m-%d")).days + 1) if len(sorted_dates) > 1 else 1
+        avg_daily_demand = total_qty / span_days
+
+        recent_dates = sorted_dates[-14:]
+        recent_qty = sum(daily[d] for d in recent_dates)
+        recent_span = max(1, len(recent_dates))
+        recent_daily = recent_qty / recent_span
+
+        if avg_daily_demand > 0:
+            days_until_stockout = current_stock / recent_daily if recent_daily > 0 else 999
+        else:
+            days_until_stockout = 999
+
+        forecasted_demand = round(recent_daily * forecast_days, 1)
+        reorder_qty = max(0, round(forecasted_demand - current_stock + min_stock))
+
+        velocity = "high" if recent_daily > avg_daily_demand * 1.2 else "low" if recent_daily < avg_daily_demand * 0.8 else "normal"
+
+        forecasts.append({
+            "product": name,
+            "current_stock": current_stock,
+            "avg_daily_demand": round(avg_daily_demand, 2),
+            "recent_daily_demand": round(recent_daily, 2),
+            "forecasted_demand": forecasted_demand,
+            "days_until_stockout": round(min(days_until_stockout, 999)),
+            "reorder_quantity": reorder_qty,
+            "velocity": velocity,
+            "estimated_reorder_cost": round(reorder_qty * cost, 2),
+            "estimated_revenue": round(forecasted_demand * price, 2),
+        })
+
+    forecasts.sort(key=lambda x: x["days_until_stockout"])
+    return forecasts
+
+
+@api_router.post("/ai/forecast/advanced")
+async def get_advanced_forecast(request: AdvancedForecastRequest):
+    """Advanced sales forecasting with day-by-day predictions, confidence intervals, seasonal patterns, and product-level demand."""
+    try:
+        daily_totals: Dict[str, float] = {}
+        for sale in request.historical_sales:
+            date = sale.get("date", "")[:10]
+            total = sale.get("total", sale.get("quantity", 0) * sale.get("price", 0))
+            if date:
+                daily_totals[date] = daily_totals.get(date, 0) + total
+
+        forecast_series, trend, confidence, factors = _compute_forecast_series(daily_totals, request.forecast_days)
+
+        sorted_values = [daily_totals[d] for d in sorted(daily_totals.keys())]
+        predicted_avg = sum(f["predicted"] for f in forecast_series) / len(forecast_series) if forecast_series else 0
+
+        monthly_totals = defaultdict(float)
+        for date_str, total in daily_totals.items():
+            month_key = date_str[:7]
+            monthly_totals[month_key] += total
+        historical_monthly = [{"month": k, "revenue": round(v, 2)} for k, v in sorted(monthly_totals.items())]
+
+        dow_pattern = _detect_day_of_week_pattern(daily_totals)
+        day_names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+        weekly_pattern = [{"day": day_names[i], "multiplier": round(dow_pattern.get(i, 1.0), 3)} for i in range(7)]
+
+        result = {
+            "forecast_series": forecast_series,
+            "predicted_daily_average": round(predicted_avg, 2),
+            "trend": trend,
+            "confidence": confidence,
+            "factors": factors,
+            "forecast_period": request.forecast_days,
+            "data_points": len(sorted_values),
+            "historical_monthly": historical_monthly,
+            "weekly_pattern": weekly_pattern,
+        }
+
+        if request.include_product_forecast and request.products_data:
+            result["product_forecasts"] = _product_level_forecast(
+                request.historical_sales, request.products_data, request.forecast_days
+            )
+
+        api_key = os.environ.get("EMERGENT_LLM_KEY")
+        if api_key and len(sorted_values) >= 7:
+            try:
+                summary_prompt = f"""Analyze this sales forecast data for a business in Ghana (currency: ₵ GHS).
+
+HISTORICAL: {len(sorted_values)} days of data. Recent 7-day avg: ₵{sum(sorted_values[-7:]) / min(7, len(sorted_values)):,.2f}
+TREND: {trend} | CONFIDENCE: {confidence}
+WEEKLY PATTERN: {', '.join(f'{wp["day"]}: {wp["multiplier"]:.2f}x' for wp in weekly_pattern)}
+PREDICTED NEXT {request.forecast_days} DAYS AVG: ₵{predicted_avg:,.2f}
+
+Provide 2-3 sentences of actionable analysis. Focus on what the owner should do, not just describe the data. Use ₵ symbol."""
+                ai_summary = await call_llm(
+                    api_key=api_key,
+                    system_message="You are a sales forecasting analyst for a Ghanaian retail business. Be concise and actionable. Use ₵ for currency.",
+                    prompt=summary_prompt,
+                )
+                result["ai_summary"] = ai_summary.strip()
+            except Exception as e:
+                logger.warning("AI summary for forecast failed: %s", e)
+
+        return result
+
+    except Exception as e:
+        logger.error(f"Advanced forecast error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to generate advanced forecast: {str(e)}")
+
 
 @api_router.post("/ai/chat")
 async def ai_chat(data: Dict[str, Any]):

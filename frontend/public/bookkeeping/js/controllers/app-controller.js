@@ -7521,139 +7521,292 @@ class AppController {
                 Utils.showToast('Cash flow statement generated', 'success');
             }
 
-            renderForecasting() {
-                const monthlyRevenues = {};
-                
-                state.allSales.forEach(sale => {
-                    const month = this.getDatePeriod(sale, 'date', 7);
-                    if (!month) return;
-                    if (!monthlyRevenues[month]) {
-                        monthlyRevenues[month] = 0;
-                    }
-                    const qty = parseFloat(sale.quantity) || 0;
-                    const price = parseFloat(sale.price) || 0;
-                    const subtotal = qty * price;
-                    const discounted = subtotal * (1 - (parseFloat(sale.discount) || 0) / 100);
-                    monthlyRevenues[month] += discounted * (1 + (parseFloat(sale.tax) || 0) / 100);
-                });
-                
-                const revenues = Object.values(monthlyRevenues);
-                const avgMonthlyRevenue = revenues.length > 0 
-                    ? revenues.reduce((a, b) => a + b, 0) / revenues.length 
-                    : 0;
-                
-                let trend = 0;
-                if (revenues.length >= 2) {
-                    const recentRevenues = revenues.slice(-3);
-                    const olderRevenues = revenues.slice(-6, -3);
-                    const recentAvg = recentRevenues.reduce((a, b) => a + b, 0) / recentRevenues.length;
-                    const olderAvg = olderRevenues.length > 0 
-                        ? olderRevenues.reduce((a, b) => a + b, 0) / olderRevenues.length 
-                        : recentAvg;
-                    trend = recentAvg - olderAvg;
+            async renderForecasting() {
+                const periodSelect = document.getElementById('forecast-period-select');
+                const refreshBtn = document.getElementById('refresh-forecast-btn');
+                const forecastDays = periodSelect ? parseInt(periodSelect.value) : 30;
+
+                if (periodSelect && !periodSelect._bound) {
+                    periodSelect.addEventListener('change', () => this.renderForecasting());
+                    periodSelect._bound = true;
                 }
-                
-                const nextMonthForecast = avgMonthlyRevenue + trend;
-                const nextQuarterForecast = (avgMonthlyRevenue + trend) * 3;
-                
-                this.updateElement('next-month-forecast', Utils.formatCurrency(Math.max(0, nextMonthForecast)));
-                this.updateElement('next-quarter-forecast', Utils.formatCurrency(Math.max(0, nextQuarterForecast)));
-                
-                this.renderForecastTrendChart(monthlyRevenues);
+                if (refreshBtn && !refreshBtn._bound) {
+                    refreshBtn.addEventListener('click', () => this.renderForecasting());
+                    refreshBtn._bound = true;
+                }
+
+                const BACKEND_URL = window.BACKEND_URL || '';
+
+                try {
+                    const response = await fetch(`${BACKEND_URL}/api/ai/forecast/advanced`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            historical_sales: state.allSales || [],
+                            products_data: state.allProducts || [],
+                            forecast_days: forecastDays,
+                            include_product_forecast: true
+                        })
+                    });
+
+                    if (!response.ok) throw new Error('Forecast request failed');
+                    const data = await response.json();
+
+                    const dailyAvg = data.predicted_daily_average || 0;
+                    const periodTotal = dailyAvg * forecastDays;
+                    this.updateElement('fc-daily-avg', Utils.formatCurrency(dailyAvg));
+                    this.updateElement('fc-period-total', Utils.formatCurrency(periodTotal));
+
+                    const trendBadge = document.getElementById('fc-trend-badge');
+                    if (trendBadge) {
+                        const t = data.trend || 'stable';
+                        const icon = t === 'up' ? '↑' : t === 'down' ? '↓' : '→';
+                        const colors = { up: 'rgba(40,167,69,0.3)', down: 'rgba(220,53,69,0.3)', stable: 'rgba(255,255,255,0.2)' };
+                        trendBadge.style.background = colors[t] || colors.stable;
+                        trendBadge.textContent = `${icon} ${t.charAt(0).toUpperCase() + t.slice(1)}`;
+                    }
+
+                    this.updateElement('fc-confidence', `Confidence: ${(data.confidence || 'Medium').charAt(0).toUpperCase() + (data.confidence || 'medium').slice(1)}`);
+                    this.updateElement('fc-data-points', data.data_points || 0);
+                    const dp = data.data_points || 0;
+                    this.updateElement('fc-data-quality', dp >= 30 ? 'Excellent data' : dp >= 14 ? 'Good data' : dp >= 7 ? 'Fair data' : 'Limited data');
+
+                    const wp = data.weekly_pattern || [];
+                    if (wp.length > 0) {
+                        const best = wp.reduce((a, b) => a.multiplier > b.multiplier ? a : b);
+                        this.updateElement('fc-best-day', best.day || '—');
+                        this.updateElement('fc-best-day-mult', `${(best.multiplier * 100).toFixed(0)}% of average`);
+                    }
+
+                    const aiPanel = document.getElementById('fc-ai-summary');
+                    if (data.ai_summary && aiPanel) {
+                        document.getElementById('fc-ai-summary-text').textContent = data.ai_summary;
+                        aiPanel.style.display = 'block';
+                    }
+
+                    this.renderForecastTrendChart(data);
+                    this.renderWeeklyPatternChart(wp);
+                    this.renderMonthlyHistoryChart(data.historical_monthly || []);
+                    this.renderProductForecastTable(data.product_forecasts || []);
+                    this.renderForecastFactors(data.factors || []);
+
+                } catch (error) {
+                    console.error('Advanced forecast error, falling back to client-side:', error);
+                    this.renderForecastFallback();
+                }
+
                 this.renderInventoryAlerts();
             }
 
-            renderForecastTrendChart(monthlyRevenues) {
+            renderForecastFallback() {
+                const monthlyRevenues = {};
+                state.allSales.forEach(sale => {
+                    const month = this.getDatePeriod(sale, 'date', 7);
+                    if (!month) return;
+                    monthlyRevenues[month] = (monthlyRevenues[month] || 0) +
+                        (parseFloat(sale.quantity) || 0) * (parseFloat(sale.price) || 0);
+                });
+                const revenues = Object.values(monthlyRevenues);
+                const avg = revenues.length ? revenues.reduce((a, b) => a + b, 0) / revenues.length : 0;
+                this.updateElement('fc-daily-avg', Utils.formatCurrency(avg / 30));
+                this.updateElement('fc-period-total', Utils.formatCurrency(avg));
+                this.updateElement('fc-data-points', Object.keys(monthlyRevenues).length);
+                this.updateElement('fc-data-quality', 'Offline estimate');
+            }
+
+            renderForecastTrendChart(data) {
                 const canvas = document.getElementById('forecast-trend-chart');
                 if (!canvas) return;
-                
-                if (state.charts.forecastTrend) {
-                    state.charts.forecastTrend.destroy();
-                }
-                
-                const months = Object.keys(monthlyRevenues).sort();
-                const revenues = months.map(m => monthlyRevenues[m]);
-                
-                if (months.length === 0) {
-                    const ctx = canvas.getContext('2d');
-                    ctx.clearRect(0, 0, canvas.width, canvas.height);
-                    ctx.font = '14px Roboto';
-                    ctx.fillStyle = '#888';
-                    ctx.textAlign = 'center';
-                    ctx.fillText('Not enough data for forecast', canvas.width / 2, canvas.height / 2);
-                    return;
-                }
-                
-                const n = revenues.length;
-                let sumX = 0, sumY = 0, sumXY = 0, sumX2 = 0;
-                
-                revenues.forEach((y, x) => {
-                    sumX += x;
-                    sumY += y;
-                    sumXY += x * y;
-                    sumX2 += x * x;
+                if (state.charts.forecastTrend) state.charts.forecastTrend.destroy();
+
+                const series = data.forecast_series || [];
+                const historical = data.historical_monthly || [];
+                if (series.length === 0 && historical.length === 0) return;
+
+                const labels = series.map(s => {
+                    const d = new Date(s.date);
+                    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
                 });
-                
-                const slope = (n * sumXY - sumX * sumY) / (n * sumX2 - sumX * sumX);
-                const intercept = (sumY - slope * sumX) / n;
-                
-                const forecastMonths = [];
-                const forecastValues = [];
-                
-                for (let i = 1; i <= 3; i++) {
-                    const lastDate = new Date(months[months.length - 1]);
-                    lastDate.setMonth(lastDate.getMonth() + i);
-                    forecastMonths.push(lastDate.toISOString().substring(0, 7));
-                    forecastValues.push(Math.max(0, slope * (n + i - 1) + intercept));
-                }
-                
-                const allMonths = [...months, ...forecastMonths];
-                
-                const ctx = canvas.getContext('2d');
-                state.charts.forecastTrend = new Chart(ctx, {
+                const predicted = series.map(s => s.predicted);
+                const lower = series.map(s => s.lower_bound);
+                const upper = series.map(s => s.upper_bound);
+
+                state.charts.forecastTrend = new Chart(canvas.getContext('2d'), {
                     type: 'line',
                     data: {
-                        labels: allMonths.map(m => new Date(m).toLocaleDateString('en-US', { month: 'short', year: 'numeric' })),
+                        labels,
                         datasets: [
                             {
-                                label: 'Actual Revenue',
-                                data: [...revenues, ...Array(3).fill(null)],
-                                borderColor: '#007bff',
-                                backgroundColor: 'rgba(0, 123, 255, 0.1)',
-                                tension: 0.4,
-                                fill: true
+                                label: 'Upper Bound',
+                                data: upper,
+                                borderColor: 'transparent',
+                                backgroundColor: 'rgba(0, 123, 255, 0.08)',
+                                fill: '+1',
+                                pointRadius: 0,
                             },
                             {
-                                label: 'Forecast',
-                                data: [...Array(n).fill(null), ...forecastValues],
-                                borderColor: '#28a745',
-                                backgroundColor: 'rgba(40, 167, 69, 0.1)',
-                                borderDash: [5, 5],
-                                tension: 0.4,
-                                fill: true
+                                label: 'Predicted Revenue',
+                                data: predicted,
+                                borderColor: '#007bff',
+                                backgroundColor: 'rgba(0, 123, 255, 0.15)',
+                                borderWidth: 2.5,
+                                tension: 0.3,
+                                fill: false,
+                                pointRadius: series.length > 30 ? 0 : 3,
+                                pointHoverRadius: 5,
+                            },
+                            {
+                                label: 'Lower Bound',
+                                data: lower,
+                                borderColor: 'transparent',
+                                backgroundColor: 'rgba(0, 123, 255, 0.08)',
+                                fill: '-1',
+                                pointRadius: 0,
                             }
                         ]
                     },
                     options: {
                         responsive: true,
                         maintainAspectRatio: true,
+                        interaction: { mode: 'index', intersect: false },
                         plugins: {
                             tooltip: {
                                 callbacks: {
-                                    label: (context) => `${context.dataset.label}: ${Utils.formatCurrency(context.parsed.y || 0)}`
+                                    label: (ctx) => {
+                                        if (ctx.datasetIndex === 1) return `Predicted: ${Utils.formatCurrency(ctx.parsed.y)}`;
+                                        if (ctx.datasetIndex === 0) return `Upper: ${Utils.formatCurrency(ctx.parsed.y)}`;
+                                        return `Lower: ${Utils.formatCurrency(ctx.parsed.y)}`;
+                                    }
                                 }
-                            }
+                            },
+                            legend: { labels: { filter: (item) => item.datasetIndex === 1 } }
                         },
                         scales: {
-                            y: {
-                                beginAtZero: true,
-                                ticks: {
-                                    callback: (value) => Utils.formatCurrency(value)
-                                }
-                            }
+                            y: { beginAtZero: true, ticks: { callback: (v) => Utils.formatCurrency(v) } },
+                            x: { ticks: { maxTicksLimit: 10 } }
                         }
                     }
                 });
+            }
+
+            renderWeeklyPatternChart(weeklyPattern) {
+                const canvas = document.getElementById('weekly-pattern-chart');
+                if (!canvas || !weeklyPattern.length) return;
+                if (state.charts.weeklyPattern) state.charts.weeklyPattern.destroy();
+
+                const colors = weeklyPattern.map(wp =>
+                    wp.multiplier >= 1.1 ? 'rgba(40,167,69,0.7)' :
+                    wp.multiplier <= 0.9 ? 'rgba(220,53,69,0.7)' :
+                    'rgba(0,123,255,0.7)'
+                );
+
+                state.charts.weeklyPattern = new Chart(canvas.getContext('2d'), {
+                    type: 'bar',
+                    data: {
+                        labels: weeklyPattern.map(wp => wp.day.substring(0, 3)),
+                        datasets: [{
+                            label: 'Sales Multiplier',
+                            data: weeklyPattern.map(wp => wp.multiplier),
+                            backgroundColor: colors,
+                            borderRadius: 4,
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: true,
+                        plugins: {
+                            tooltip: { callbacks: { label: (ctx) => `${(ctx.parsed.y * 100).toFixed(0)}% of average` } },
+                            legend: { display: false },
+                            annotation: { annotations: { baseline: { type: 'line', yMin: 1, yMax: 1, borderColor: '#888', borderWidth: 1, borderDash: [4, 4] } } }
+                        },
+                        scales: {
+                            y: { beginAtZero: true, ticks: { callback: (v) => `${(v * 100).toFixed(0)}%` } }
+                        }
+                    }
+                });
+            }
+
+            renderMonthlyHistoryChart(monthlyData) {
+                const canvas = document.getElementById('monthly-history-chart');
+                if (!canvas || !monthlyData.length) return;
+                if (state.charts.monthlyHistory) state.charts.monthlyHistory.destroy();
+
+                state.charts.monthlyHistory = new Chart(canvas.getContext('2d'), {
+                    type: 'bar',
+                    data: {
+                        labels: monthlyData.map(m => {
+                            const d = new Date(m.month + '-01');
+                            return d.toLocaleDateString('en-US', { month: 'short', year: '2-digit' });
+                        }),
+                        datasets: [{
+                            label: 'Revenue',
+                            data: monthlyData.map(m => m.revenue),
+                            backgroundColor: 'rgba(102, 126, 234, 0.7)',
+                            borderRadius: 4,
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: true,
+                        plugins: {
+                            tooltip: { callbacks: { label: (ctx) => Utils.formatCurrency(ctx.parsed.y) } },
+                            legend: { display: false }
+                        },
+                        scales: {
+                            y: { beginAtZero: true, ticks: { callback: (v) => Utils.formatCurrency(v) } }
+                        }
+                    }
+                });
+            }
+
+            renderProductForecastTable(forecasts) {
+                const container = document.getElementById('product-forecast-table');
+                if (!container) return;
+
+                if (!forecasts.length) {
+                    container.innerHTML = '<p style="color:#888;text-align:center;padding:1rem;">No product forecast data available</p>';
+                    return;
+                }
+
+                const rows = forecasts.slice(0, 20).map(f => {
+                    const stockoutColor = f.days_until_stockout <= 7 ? '#dc3545' : f.days_until_stockout <= 14 ? '#ffc107' : '#28a745';
+                    const velocityIcon = f.velocity === 'high' ? '🔥' : f.velocity === 'low' ? '🐌' : '➡️';
+                    return `<tr>
+                        <td><strong>${f.product}</strong></td>
+                        <td>${f.current_stock}</td>
+                        <td>${f.recent_daily_demand}/day</td>
+                        <td>${Math.round(f.forecasted_demand)}</td>
+                        <td style="color:${stockoutColor};font-weight:600;">${f.days_until_stockout >= 999 ? '∞' : f.days_until_stockout + 'd'}</td>
+                        <td>${f.reorder_quantity > 0 ? '<strong>' + f.reorder_quantity + '</strong>' : '—'}</td>
+                        <td>${velocityIcon} ${f.velocity}</td>
+                        <td>${Utils.formatCurrency(f.estimated_reorder_cost)}</td>
+                    </tr>`;
+                }).join('');
+
+                container.innerHTML = `
+                    <table style="width:100%;border-collapse:collapse;font-size:0.9rem;">
+                        <thead><tr style="border-bottom:2px solid #ddd;text-align:left;">
+                            <th style="padding:0.75rem 0.5rem;">Product</th>
+                            <th style="padding:0.75rem 0.5rem;">Stock</th>
+                            <th style="padding:0.75rem 0.5rem;">Daily Demand</th>
+                            <th style="padding:0.75rem 0.5rem;">Period Demand</th>
+                            <th style="padding:0.75rem 0.5rem;">Stockout In</th>
+                            <th style="padding:0.75rem 0.5rem;">Reorder Qty</th>
+                            <th style="padding:0.75rem 0.5rem;">Velocity</th>
+                            <th style="padding:0.75rem 0.5rem;">Reorder Cost</th>
+                        </tr></thead>
+                        <tbody>${rows}</tbody>
+                    </table>`;
+            }
+
+            renderForecastFactors(factors) {
+                const container = document.getElementById('forecast-factors');
+                if (!container) return;
+                container.innerHTML = factors.map(f =>
+                    `<div style="background:#f0f4ff;padding:0.6rem 1rem;border-radius:20px;font-size:0.85rem;border:1px solid #d0d8f0;">
+                        <i class="fas fa-info-circle" style="color:#007bff;margin-right:0.4rem;"></i>${f}
+                    </div>`
+                ).join('');
             }
 
             renderInventoryAlerts() {
@@ -11809,27 +11962,81 @@ class AppController {
             static buildForecastingSection() {
                 return `
                     <section id="forecasting">
+                        <div class="card" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:1rem;">
+                            <h2 style="margin:0;"><i class="fas fa-chart-line"></i> Sales Forecasting & Predictive Analytics</h2>
+                            <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
+                                <select id="forecast-period-select" style="padding:0.5rem;border-radius:6px;border:1px solid #ddd;">
+                                    <option value="7">Next 7 Days</option>
+                                    <option value="14">Next 14 Days</option>
+                                    <option value="30" selected>Next 30 Days</option>
+                                    <option value="60">Next 60 Days</option>
+                                    <option value="90">Next 90 Days</option>
+                                </select>
+                                <button id="refresh-forecast-btn" style="padding:0.5rem 1rem;border-radius:6px;background:#007bff;color:white;border:none;cursor:pointer;">
+                                    <i class="fas fa-sync-alt"></i> Refresh
+                                </button>
+                            </div>
+                        </div>
+
+                        <div id="forecast-kpi-row" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:1rem;margin-bottom:1.5rem;">
+                            <div class="forecast-card" style="background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);color:white;padding:1.5rem;border-radius:8px;box-shadow:0 4px 6px rgba(0,0,0,0.1);">
+                                <div style="font-size:0.85rem;opacity:0.9;">Predicted Daily Average</div>
+                                <div id="fc-daily-avg" style="font-size:1.75rem;font-weight:bold;margin:0.5rem 0;">₵0.00</div>
+                                <div id="fc-trend-badge" style="display:inline-block;padding:0.2rem 0.6rem;border-radius:12px;font-size:0.75rem;background:rgba(255,255,255,0.2);">—</div>
+                            </div>
+                            <div class="forecast-card" style="background:linear-gradient(135deg,#f093fb 0%,#f5576c 100%);color:white;padding:1.5rem;border-radius:8px;box-shadow:0 4px 6px rgba(0,0,0,0.1);">
+                                <div style="font-size:0.85rem;opacity:0.9;">Period Total Forecast</div>
+                                <div id="fc-period-total" style="font-size:1.75rem;font-weight:bold;margin:0.5rem 0;">₵0.00</div>
+                                <div id="fc-confidence" style="font-size:0.8rem;opacity:0.9;">Confidence: —</div>
+                            </div>
+                            <div class="forecast-card" style="background:linear-gradient(135deg,#43e97b 0%,#38f9d7 100%);color:#1a1a2e;padding:1.5rem;border-radius:8px;box-shadow:0 4px 6px rgba(0,0,0,0.1);">
+                                <div style="font-size:0.85rem;opacity:0.8;">Strongest Day</div>
+                                <div id="fc-best-day" style="font-size:1.75rem;font-weight:bold;margin:0.5rem 0;">—</div>
+                                <div id="fc-best-day-mult" style="font-size:0.8rem;opacity:0.8;">—</div>
+                            </div>
+                            <div class="forecast-card" style="background:linear-gradient(135deg,#fa709a 0%,#fee140 100%);color:#1a1a2e;padding:1.5rem;border-radius:8px;box-shadow:0 4px 6px rgba(0,0,0,0.1);">
+                                <div style="font-size:0.85rem;opacity:0.8;">Data Points</div>
+                                <div id="fc-data-points" style="font-size:1.75rem;font-weight:bold;margin:0.5rem 0;">0</div>
+                                <div id="fc-data-quality" style="font-size:0.8rem;opacity:0.8;">—</div>
+                            </div>
+                        </div>
+
+                        <div id="fc-ai-summary" style="display:none;background:#1a1a2e;border:1px solid #2a2a4a;border-radius:8px;padding:1.25rem;margin-bottom:1.5rem;color:#e1e8ed;">
+                            <div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.75rem;">
+                                <i class="fas fa-robot" style="color:#007bff;"></i>
+                                <strong style="color:#fff;">AI Analysis</strong>
+                            </div>
+                            <p id="fc-ai-summary-text" style="margin:0;line-height:1.6;font-size:0.95rem;"></p>
+                        </div>
+
                         <div class="card">
-                            <h2><i class="fas fa-chart-line"></i> Sales Forecasting</h2>
+                            <h3><i class="fas fa-chart-area"></i> Revenue Forecast with Confidence Interval</h3>
+                            <canvas id="forecast-trend-chart" style="max-height:400px;"></canvas>
                         </div>
-                        
-                        <div class="forecast-card" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 2rem; border-radius: 8px; margin-bottom: 1.5rem; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
-                            <h3>Next Month Forecast</h3>
-                            <div class="forecast-value" id="next-month-forecast" style="font-size: 2rem; font-weight: bold; margin: 1rem 0;">₵0.00</div>
-                            <small>Based on historical trends</small>
+
+                        <div style="display:grid;grid-template-columns:1fr 1fr;gap:1.5rem;margin-bottom:1.5rem;">
+                            <div class="card">
+                                <h3><i class="fas fa-calendar-week"></i> Weekly Sales Pattern</h3>
+                                <canvas id="weekly-pattern-chart" style="max-height:300px;"></canvas>
+                            </div>
+                            <div class="card">
+                                <h3><i class="fas fa-chart-bar"></i> Monthly Revenue History</h3>
+                                <canvas id="monthly-history-chart" style="max-height:300px;"></canvas>
+                            </div>
                         </div>
-                        
-                        <div class="forecast-card" style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); color: white; padding: 2rem; border-radius: 8px; margin-bottom: 1.5rem; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
-                            <h3>Next Quarter Forecast</h3>
-                            <div class="forecast-value" id="next-quarter-forecast" style="font-size: 2rem; font-weight: bold; margin: 1rem 0;">₵0.00</div>
-                            <small>Projected revenue for next 3 months</small>
-                        </div>
-                        
+
                         <div class="card">
-                            <h3><i class="fas fa-chart-area"></i> Trend Analysis</h3>
-                            <canvas id="forecast-trend-chart"></canvas>
+                            <h3><i class="fas fa-boxes"></i> Product Demand Forecast</h3>
+                            <div id="product-forecast-table" style="overflow-x:auto;">
+                                <p style="color:#888;text-align:center;padding:2rem;">Loading product forecasts...</p>
+                            </div>
                         </div>
-                        
+
+                        <div class="card" style="margin-bottom:1.5rem;">
+                            <h3><i class="fas fa-lightbulb"></i> Forecast Factors</h3>
+                            <div id="forecast-factors" style="display:flex;flex-wrap:wrap;gap:0.75rem;"></div>
+                        </div>
+
                         <div class="card">
                             <h3><i class="fas fa-exclamation-triangle"></i> Inventory Alerts</h3>
                             <div id="inventory-alerts"></div>
