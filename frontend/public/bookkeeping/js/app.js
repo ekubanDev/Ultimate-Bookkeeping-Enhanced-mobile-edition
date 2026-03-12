@@ -128,7 +128,6 @@ async function initializeApp() {
         console.log('✅ Email service initialized');
         
         // Initialize services globally before AppController
-        // (auth observer inside AppController may fire immediately for cached sessions)
         window.stockAlerts = stockAlerts;
         window.formValidator = formValidator;
         window.profitAnalysis = profitAnalysis;
@@ -138,10 +137,6 @@ async function initializeApp() {
         window.stockTransfer = stockTransfer;
         window.pdfExport = pdfExport;
         window.barcodeScanner = barcodeScanner;
-        window.enhancedDashboard = new EnhancedDashboard();
-        console.log('✅ Enhanced Dashboard initialized');
-
-        barcodeScanner.initKeyboardScanner();
 
         const app = new AppController();
         window.appController = app;
@@ -149,11 +144,25 @@ async function initializeApp() {
         window.emailService = emailService;
         window.i18nService = i18nService;
         window.offlineSyncService = offlineSyncService;
-        
-        // Initialize AI Chat
-        aiChatService.init(state);
-        window.aiChatService = aiChatService;
-        console.log('✅ AI Chat initialized');
+
+        // Defer heavy / non-critical init until after first paint
+        let heavyInitDone = false;
+        const deferHeavyInit = () => {
+            if (heavyInitDone) return;
+            heavyInitDone = true;
+            window.enhancedDashboard = new EnhancedDashboard();
+            console.log('✅ Enhanced Dashboard initialized');
+            if (window.appController) window.appController.markSectionDirty('dashboard');
+            barcodeScanner.initKeyboardScanner();
+            aiChatService.init(state);
+            window.aiChatService = aiChatService;
+            console.log('✅ AI Chat initialized');
+        };
+        if (typeof requestIdleCallback !== 'undefined') {
+            requestIdleCallback(deferHeavyInit, { timeout: 2500 });
+        } else {
+            setTimeout(deferHeavyInit, 800);
+        }
         
         // Check for recurring expenses after auth is ready
         setTimeout(() => {

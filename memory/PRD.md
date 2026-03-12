@@ -274,6 +274,38 @@ Enhance the Ultimate Bookkeeping Firebase application with:
 - `frontend/public/bookkeeping/js/utils/utils.js` — Toast dismiss button, progress bar, stacking limit, ARIA role
 - `frontend/public/bookkeeping/sw.js` — Cache version bumped to v4
 
+### Feature 5: Performance Optimization ✅
+**Date**: 2026-03-12
+**Status**: COMPLETED
+
+#### What's Been Implemented:
+
+1. **Lazy section rendering**
+   - Sections render only on first visit or when data is dirty (`_sectionRendered`, `_sectionDirty`).
+   - Switching tabs no longer re-runs heavy render (Sales, Inventory, Analytics, etc.) unless data changed.
+   - Realtime Firestore listeners mark sections dirty and only refresh the currently visible section (`_refreshCurrentSectionIfDirty()`).
+   - After add/edit/delete and data reloads, only the active section re-renders; others re-render on next visit.
+
+2. **Deferred non-critical init**
+   - Enhanced Dashboard and AI Chat (and barcode keyboard scanner) are created after first paint via `requestIdleCallback` (fallback `setTimeout(800)`).
+   - Dashboard section uses legacy render until Enhanced Dashboard is ready; then dashboard is marked dirty so next visit uses enhanced view.
+   - Reduces initial JS work and speeds up first interactive frame.
+
+3. **Customers list pagination**
+   - Customers table shows 50 rows per page with a "Load more" button for the remainder.
+   - Page resets to 0 when search filter changes.
+   - Reduces DOM size and render time for large customer lists.
+
+4. **Asset and load hints**
+   - `preconnect` for `fonts.googleapis.com` and `fonts.gstatic.com` to speed up font loading.
+   - Service worker cache version bumped to v5.
+
+#### Files Changed:
+- `frontend/public/bookkeeping/js/controllers/app-controller.js` — Lazy render state, `markSectionDirty` / `markSectionsDirty` / `_refreshCurrentSectionIfDirty`, showSection gating, realtime listeners and post-mutation calls updated to use dirty + refresh; customers pagination (50 per page, Load more).
+- `frontend/public/bookkeeping/js/app.js` — Deferred init of EnhancedDashboard, AI Chat, barcode scanner; dashboard marked dirty when enhanced loads.
+- `frontend/public/bookkeeping/index.html` — Preconnect for Google Fonts.
+- `frontend/public/bookkeeping/sw.js` — Cache version v5.
+
 ---
 
 ## Prioritized Backlog
@@ -284,7 +316,7 @@ Enhance the Ultimate Bookkeeping Firebase application with:
 
 ### P1
 - [x] Feature 4: UI/UX improvements - COMPLETED
-- [ ] Feature 5: Performance optimization
+- [x] Feature 5: Performance optimization - COMPLETED
 
 ### P2
 - [x] Mobile responsive optimizations (COMPLETED - PWA + Capacitor)
@@ -294,11 +326,8 @@ Enhance the Ultimate Bookkeeping Firebase application with:
 ---
 
 ## Next Tasks
-1. Feature 5: Performance optimization
-   - Lazy loading for sections
-   - Data pagination
-   - Bundle optimization
-   - Image and asset optimization
+1. Optional follow-ups: virtual scrolling for very large tables, image lazy-loading, further code-splitting if a bundler is introduced.
+2. Additional chart types (P2).
 
 ---
 

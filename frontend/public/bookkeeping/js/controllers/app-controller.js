@@ -33,9 +33,53 @@ class AppController {
             constructor() {
                 this.currentInvoiceData = null;
                 this._lastOutOfStockIds = null;
+                this._sectionRendered = {};
+                this._sectionDirty = {};
+                this._currentSection = null;
                 this.initializeUI();
                 this.setupEventListeners();
                 this.setupAuthObserver();
+            }
+
+            _shouldRenderSection(name) {
+                return !this._sectionRendered[name] || !!this._sectionDirty[name];
+            }
+
+            _markRendered(name) {
+                this._sectionRendered[name] = true;
+                this._sectionDirty[name] = false;
+            }
+
+            markSectionDirty(name) {
+                this._sectionDirty[name] = true;
+            }
+
+            markSectionsDirty(names) {
+                names.forEach(n => { this._sectionDirty[n] = true; });
+            }
+
+            _refreshCurrentSectionIfDirty() {
+                const cur = this._currentSection;
+                if (!cur || !this._sectionDirty[cur]) return;
+                switch (cur) {
+                    case 'dashboard': if (window.enhancedDashboard) { window.enhancedDashboard.state = state; window.enhancedDashboard.render(); } else this.renderDashboard(); break;
+                    case 'sales': this.renderSales(); break;
+                    case 'inventory': this.renderInventoryTable(); break;
+                    case 'expenses': this.renderExpenses(); break;
+                    case 'customers': this.renderCustomers(); break;
+                    case 'analytics': this.renderAnalytics(); break;
+                    case 'accounting': this.renderAccounting(); break;
+                    case 'suppliers': this.renderSuppliers(); break;
+                    case 'purchase-orders': this.renderPurchaseOrders(); break;
+                    case 'consignments': this.renderConsignments(); break;
+                    case 'settlements': this.renderSettlements(); break;
+                    case 'liabilities': this.renderLiabilities(); break;
+                    case 'outlets': this.renderOutlets(); break;
+                    case 'forecasting': this.renderForecasting(); break;
+                    case 'reports': this.renderReports(); break;
+                    default: break;
+                }
+                this._markRendered(cur);
             }
 
             initializeUI() {
@@ -921,7 +965,11 @@ class AppController {
 
                 const customerSearch = document.getElementById('customer-search');
                 if (customerSearch) {
-                    const debouncedRender = Utils.debounce(() => this.renderCustomers(), 300);
+                    const debouncedRender = Utils.debounce(() => {
+                        const section = document.getElementById('customers');
+                        if (section) section.dataset.customersPage = '0';
+                        this.renderCustomers();
+                    }, 300);
                     customerSearch.addEventListener('input', debouncedRender);
                 }
 
@@ -1242,84 +1290,81 @@ class AppController {
                 // Scroll main content to top for better UX
                 const container = document.getElementById('sections-container');
                 if (container) container.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                
-                // Render content based on section
+
+                this._currentSection = sectionName;
+                const shouldRender = this._shouldRenderSection(sectionName);
+
+                // Render content based on section (lazy: only when first visited or dirty)
                 switch(sectionName) {
                     case 'dashboard':
-                        if (window.enhancedDashboard) {
-                            try {
-                                window.enhancedDashboard.state = state;
-                                window.enhancedDashboard.render();
-                            } catch (err) {
-                                console.error('Enhanced dashboard render failed, falling back:', err);
+                        if (shouldRender) {
+                            if (window.enhancedDashboard) {
+                                try {
+                                    window.enhancedDashboard.state = state;
+                                    window.enhancedDashboard.render();
+                                } catch (err) {
+                                    console.error('Enhanced dashboard render failed, falling back:', err);
+                                    this.renderDashboard();
+                                }
+                            } else {
                                 this.renderDashboard();
                             }
-                        } else {
-                            this.renderDashboard();
-                        }
-                        if (window.stockAlerts) {
-                            window.stockAlerts.showStartupAlerts();
+                            if (window.stockAlerts) window.stockAlerts.showStartupAlerts();
+                            this._markRendered(sectionName);
                         }
                         break;
                     case 'sales':
-                        this.renderSales();
+                        if (shouldRender) { this.renderSales(); this._markRendered(sectionName); }
                         break;
                     case 'inventory':
-                        this.renderInventoryTable();
+                        if (shouldRender) { this.renderInventoryTable(); this._markRendered(sectionName); }
                         break;
                     case 'suppliers':
-                        this.renderSuppliers();
+                        if (shouldRender) { this.renderSuppliers(); this._markRendered(sectionName); }
                         break;
                     case 'purchase-orders':
-                        this.renderPurchaseOrders();
+                        if (shouldRender) { this.renderPurchaseOrders(); this._markRendered(sectionName); }
                         break;
                     case 'outlets':
-                       if (state.userRole === 'admin') {
-                            this.renderOutlets();
-                        }
+                        if (state.userRole === 'admin' && shouldRender) { this.renderOutlets(); this._markRendered(sectionName); }
                         break;
                     case 'forecasting':
-                        if (state.userRole === 'admin') {
-                            this.renderForecasting()
-                        }
+                        if (state.userRole === 'admin' && shouldRender) { this.renderForecasting(); this._markRendered(sectionName); }
                         break;
                     case 'accounting':
-                        if (state.userRole === 'admin') {
-                            this.renderAccounting();
-                        }
+                        if (state.userRole === 'admin' && shouldRender) { this.renderAccounting(); this._markRendered(sectionName); }
                         break;
                     case 'consignments':
-                        this.renderConsignments();
+                        if (shouldRender) { this.renderConsignments(); this._markRendered(sectionName); }
                         break;
                     case 'settlements':
-                        this.renderSettlements();
+                        if (shouldRender) { this.renderSettlements(); this._markRendered(sectionName); }
                         break;
                     case 'expenses':
-                        this.renderExpenses();
+                        if (shouldRender) { this.renderExpenses(); this._markRendered(sectionName); }
                         break;
                     case 'customers':
-                        this.renderCustomers();
+                        if (shouldRender) { this.renderCustomers(); this._markRendered(sectionName); }
                         break;
                     case 'analytics':
-                        this.renderAnalytics();
-                        this.initializeDateRangeSelector();
+                        if (shouldRender) { this.renderAnalytics(); this.initializeDateRangeSelector(); this._markRendered(sectionName); }
                         break;
                     case 'liabilities':
-                        this.renderLiabilities();
+                        if (shouldRender) { this.renderLiabilities(); this._markRendered(sectionName); }
                         break;
                     case 'loans':
                         break;
                     case 'user-management':
-                        this.loadManagedUsers();
+                        if (shouldRender) { this.loadManagedUsers(); this._markRendered(sectionName); }
                         break;
                     case 'settings':
-                        this.loadSettings();
+                        if (shouldRender) { this.loadSettings(); this._markRendered(sectionName); }
                         break;
                     case 'profit-analysis':
                         this.showProfitAnalysis();
                         break;
                     case 'reports':
-                        this.renderReports();
+                        if (shouldRender) { this.renderReports(); this._markRendered(sectionName); }
                         break;
                 }
             }
@@ -1822,61 +1867,47 @@ class AppController {
             setupRealtimeListeners() {
                 onSnapshot(firebaseService.getUserCollection('inventory'), () => {
                     dataLoader.loadProducts().then(() => {
-                        this.renderInventoryTable();
-                        this.renderDashboard();
+                        this.markSectionsDirty(['inventory', 'dashboard', 'outlets', 'consignments', 'settlements']);
                         this.checkLowStockAndNotify();
-                        this.renderOutlets();
-                        this.renderConsignments();
-                        this.renderActivityLog();
-                        this.renderSettlements();
-                        if (state.userRole === 'admin') {
-                            this.renderUsers();
-                        }
+                        this._refreshCurrentSectionIfDirty();
+                        if (state.userRole === 'admin') this.markSectionDirty('user-management');
                     });
                 });
-                
+
                 onSnapshot(firebaseService.getUserCollection('sales'), () => {
                     dataLoader.loadSales().then(() => {
-                        this.renderSales();
-                        this.renderDashboard();
+                        this.markSectionsDirty(['sales', 'dashboard']);
+                        this._refreshCurrentSectionIfDirty();
                     });
                 });
-                
-                // Setup expense listeners based on user role
+
                 if (state.userRole === 'outlet_manager' && state.assignedOutlet) {
-                    // Listen to outlet expenses only
                     onSnapshot(firebaseService.getOutletSubCollection(state.assignedOutlet, 'outlet_expenses'), () => {
                         dataLoader.loadExpenses().then(() => {
-                            this.renderExpenses();
-                            this.renderDashboard();
-                            this.renderAnalytics();
+                            this.markSectionsDirty(['expenses', 'dashboard', 'analytics']);
+                            this._refreshCurrentSectionIfDirty();
                         });
                     });
                 } else if (state.userRole === 'admin') {
-                    // Listen to main expenses for admin
                     onSnapshot(firebaseService.getUserCollection('expenses'), () => {
                         dataLoader.loadExpenses().then(() => {
-                            this.renderExpenses();
-                            this.renderDashboard();
-                            this.renderAnalytics();
+                            this.markSectionsDirty(['expenses', 'dashboard', 'analytics']);
+                            this._refreshCurrentSectionIfDirty();
                         });
                     });
-                    
-                    // Also listen to outlet expenses if viewing specific outlet
-                    // (This will be managed when outlet filter changes)
                 }
 
                 onSnapshot(firebaseService.getUserCollection('customers'), () => {
                     dataLoader.loadCustomers().then(() => {
-                        this.renderCustomers();
+                        this.markSectionDirty('customers');
+                        this._refreshCurrentSectionIfDirty();
                     });
                 });
 
                 onSnapshot(firebaseService.getUserCollection('liabilities'), () => {
                     dataLoader.loadLiabilities().then(() => {
-                        this.renderLiabilities();
-                        this.renderDashboard();
-                        this.renderAccounting(); // Update accounting when liabilities change
+                        this.markSectionsDirty(['liabilities', 'dashboard', 'accounting']);
+                        this._refreshCurrentSectionIfDirty();
                     });
                 });
             }
@@ -2775,11 +2806,9 @@ class AppController {
                     document.getElementById('bulk-sale-modal').style.display = 'none';
                     document.getElementById('bulk-sale-form').reset();
                     
-                    // Reload data
                     await dataLoader.loadAll();
-                    this.renderSales();
-                    this.renderInventoryTable();
-                    
+                    this.markSectionsDirty(['sales', 'inventory', 'dashboard']);
+                    this._refreshCurrentSectionIfDirty();
                 } catch (error) {
                     console.error('❌ Error in bulk sale:', error);
                     Utils.showToast('Failed to record bulk purchase: ' + error.message, 'error');
@@ -2952,8 +2981,8 @@ class AppController {
                     await dataLoader.loadProducts();
                     await dataLoader.loadSales();
                     await dataLoader.loadOutlets();
-                    this.renderSales();
-                    this.renderInventoryTable();
+                    this.markSectionsDirty(['sales', 'inventory', 'dashboard']);
+                    this._refreshCurrentSectionIfDirty();
                     
                 } catch (error) {
                     console.error('Error recording sale:', error);
@@ -3034,8 +3063,8 @@ class AppController {
                     
                     // Reload data
                     await dataLoader.loadAll();
-                    this.renderSales();
-                    this.renderInventoryTable();
+                    this.markSectionsDirty(['sales', 'inventory', 'dashboard']);
+                    this._refreshCurrentSectionIfDirty();
                     
                 } catch (error) {
                     console.error('❌ Error editing sale:', error);
@@ -3107,8 +3136,8 @@ class AppController {
                     
                     // Reload data
                     await dataLoader.loadAll();
-                    this.renderSales();
-                    this.renderInventoryTable();
+                    this.markSectionsDirty(['sales', 'inventory', 'dashboard']);
+                    this._refreshCurrentSectionIfDirty();
                     
                 } catch (error) {
                     console.error('❌ Error deleting sale:', error);
@@ -3597,13 +3626,8 @@ class AppController {
                     await dataLoader.loadSales();
                     await dataLoader.loadProducts();
                     
-                    // Refresh ALL sections to reflect the new filter
-                    this.renderDashboard();
-                    this.renderExpenses();
-                    this.renderAnalytics();
-                    this.renderSales();
-                    this.renderInventoryTable();
-                    
+                    this.markSectionsDirty(['dashboard', 'expenses', 'analytics', 'sales', 'inventory']);
+                    this._refreshCurrentSectionIfDirty();
                     Utils.showToast(`Viewing data for: ${this.getOutletDisplayName(outletId)}`, 'success');
                 } catch (error) {
                     console.error('Error loading outlet data:', error);
@@ -5084,29 +5108,32 @@ class AppController {
             }
 
             renderCustomers() {
+                const section = document.getElementById('customers');
                 const tbody = document.querySelector('#customers-table tbody');
                 if (!tbody) return;
-                
-                tbody.innerHTML = '';
-                
+
+                const CUSTOMERS_PAGE_SIZE = 50;
+                const page = parseInt(section?.dataset.customersPage || '0', 10);
                 const search = document.getElementById('customer-search')?.value.toLowerCase() || '';
-                
                 let filtered = [...state.allCustomers];
-                
                 if (search) {
-                    filtered = filtered.filter(c => 
+                    filtered = filtered.filter(c =>
                         c.name.toLowerCase().includes(search) ||
                         (c.email && c.email.toLowerCase().includes(search)) ||
                         (c.phone && c.phone.includes(search))
                     );
                 }
-                
+
                 if (filtered.length === 0) {
-                    tbody.innerHTML = '<tr><td colspan="7" class="no-data">No customers found</td></tr>';
+                    tbody.innerHTML = '<tr><td colspan="6" class="no-data">No customers found</td></tr>';
                     return;
                 }
-                
-                filtered.forEach(customer => {
+
+                const endIdx = Math.min((page + 1) * CUSTOMERS_PAGE_SIZE, filtered.length);
+                const toShow = filtered.slice(0, endIdx);
+                tbody.innerHTML = '';
+
+                toShow.forEach(customer => {
                     const customerSales = state.allSales.filter(s => s.customer === customer.name);
                     const totalPurchases = customerSales.reduce((sum, s) => {
                         const subtotal = s.quantity * s.price;
@@ -5133,6 +5160,17 @@ class AppController {
                     `;
                     tbody.appendChild(row);
                 });
+
+                if (endIdx < filtered.length && section) {
+                    const loadRow = document.createElement('tr');
+                    loadRow.innerHTML = `<td colspan="6" class="no-data" style="padding:1rem;">
+                        <button type="button" class="btn btn-outline btn-sm" onclick="document.getElementById('customers').dataset.customersPage = '${page + 1}'; appController.renderCustomers();">
+                            <i class="fas fa-chevron-down"></i> Load more (${filtered.length - endIdx} remaining)
+                        </button>
+                    </td>`;
+                    tbody.appendChild(loadRow);
+                }
+                if (section) section.dataset.customersPage = String(page);
 
                 const creditSummaryEl = document.getElementById('customer-credit-summary');
                 if (creditSummaryEl && window.customerCredit) {
@@ -8174,7 +8212,8 @@ class AppController {
                     this._syncEmailSettingsToBackend(settings);
                     
                     Utils.showToast('Settings saved successfully', 'success');
-                    this.renderDashboard();
+                    this.markSectionDirty('dashboard');
+                    this._refreshCurrentSectionIfDirty();
                 } catch (error) {
                     Utils.showToast('Failed to save settings: ' + error.message, 'error');
                 } finally {
@@ -9373,8 +9412,8 @@ class AppController {
                     // Reload data
                     await dataLoader.loadProducts();
                     await dataLoader.loadOutlets();
-                    this.renderInventoryTable();
-                    
+                    this.markSectionsDirty(['inventory', 'consignments', 'outlets']);
+                    this._refreshCurrentSectionIfDirty();
                 } catch (error) {
                     Utils.showToast('Failed to send consignment: ' + error.message, 'error');
                 } finally {
@@ -11468,8 +11507,8 @@ class AppController {
                             await batch.commit();
                             
                             await dataLoader.loadAll();
-                            this.renderDashboard();
-                            
+                            this.markSectionsDirty(['dashboard', 'sales', 'inventory', 'expenses', 'customers', 'analytics']);
+                            this._refreshCurrentSectionIfDirty();
                             Utils.showToast('Data restored successfully', 'success');
                             document.getElementById('restore-file-input').value = '';
                         } catch (error) {
