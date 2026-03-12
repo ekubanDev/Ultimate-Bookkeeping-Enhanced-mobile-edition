@@ -86,6 +86,69 @@ Enhance the Ultimate Bookkeeping Firebase application with:
 - `/app/frontend/public/bookkeeping/js/controllers/app-controller.js` - Dashboard delegation
 - `/app/frontend/public/bookkeeping/index.html` - CSS imports
 
+### Feature 6: Installable Mobile App (PWA + Capacitor) ✅
+**Date**: 2026-03-12
+**Status**: COMPLETED
+
+#### Phase 1 - PWA (Progressive Web App):
+1. **Web App Manifest** (`frontend/public/manifest.json`)
+   - App name, description, theme colors, categories
+   - Full icon set (48, 72, 96, 144, 192, 384, 512px)
+   - POS shortcut for quick access
+   - Standalone display mode
+
+2. **Service Worker** (`frontend/public/bookkeeping/sw.js`)
+   - Cache-first strategy for app shell and static assets
+   - Network-first for API and Firestore calls
+   - Stale-while-revalidate for CDN resources (fonts, libraries)
+   - Offline fallback page
+   - Background sync support
+   - Push notification support
+
+3. **App Icons** (`frontend/public/assets/icons/`)
+   - 7 PNG sizes: 48, 72, 96, 144, 192, 384, 512px
+   - Apple touch icon (180px)
+   - Professional bookkeeping-themed design with cedi symbol
+
+4. **Meta Tags** (updated in both `index.html` and `pos.html`)
+   - Apple mobile web app meta tags
+   - Microsoft tile configuration
+   - Theme color, favicon references
+
+#### Phase 2 - Capacitor (Native App Shell):
+1. **Capacitor v8.2** initialized with config (`frontend/capacitor.config.ts`)
+   - App ID: `com.ultimatebookkeeping.app`
+   - SplashScreen, StatusBar, Camera, Keyboard plugin config
+   - Android and iOS platform-specific settings
+
+2. **10 Native Plugins** installed and registered:
+   - `@capacitor/app`, `camera`, `device`, `haptics`, `network`
+   - `@capacitor/share`, `splash-screen`, `status-bar`, `toast`
+   - `@capacitor-community/barcode-scanner`
+
+3. **Android & iOS projects** generated (`frontend/android/`, `frontend/ios/`)
+
+4. **Build Scripts** added:
+   - `npm run cap:build` - Build + sync to native projects
+   - `npm run cap:android` / `cap:ios` - Open in Android Studio / Xcode
+   - `npm run cap:run:android` / `cap:run:ios` - Build and run on device
+   - Root shortcuts: `npm run mobile:android`, `mobile:ios`, etc.
+
+5. **React Shell** updated to redirect to bookkeeping app
+6. **`.gitignore`** updated for native project directories
+
+#### Files Created/Modified:
+- `frontend/public/manifest.json` - PWA manifest (NEW)
+- `frontend/public/bookkeeping/sw.js` - Service worker (NEW)
+- `frontend/public/assets/icons/*` - App icons (NEW, 8 files)
+- `frontend/capacitor.config.ts` - Capacitor config (NEW)
+- `frontend/public/bookkeeping/index.html` - Updated PWA meta tags
+- `frontend/public/bookkeeping/pos.html` - Updated PWA meta tags
+- `frontend/src/App.js` - Redirect to bookkeeping app
+- `frontend/package.json` - Capacitor deps + scripts
+- `package.json` - Mobile build scripts
+- `.gitignore` - Native project exclusions
+
 ---
 
 ## Prioritized Backlog
@@ -99,7 +162,7 @@ Enhance the Ultimate Bookkeeping Firebase application with:
 - [ ] Feature 5: Performance optimization
 
 ### P2
-- [ ] Mobile responsive optimizations
+- [x] Mobile responsive optimizations (COMPLETED - PWA + Capacitor)
 - [ ] Additional chart types
 - [ ] Export reports to PDF/Excel
 
@@ -118,4 +181,4 @@ Enhance the Ultimate Bookkeeping Firebase application with:
 
 ---
 
-*Last Updated: 2026-03-11*
+*Last Updated: 2026-03-12*

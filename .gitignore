@@ -76,8 +76,24 @@ agenthub/agents/youtube/db
 # Build caches
 .cache/
 
-# Mobile development
-android-sdk/ -e 
+# Mobile / Capacitor native projects
+android-sdk/
+frontend/android/
+frontend/ios/
+frontend/ios/App/Pods/
+*.keystore
+*.jks
+*.mobileprovision
+*.provisionprofile
+google-services.json
+GoogleService-Info.plist
+
+# Capacitor build artifacts
+frontend/build/
+
+# macOS archive artifacts
+__MACOSX/
+
 # Firebase
 .firebase/
 firebase-debug.log
