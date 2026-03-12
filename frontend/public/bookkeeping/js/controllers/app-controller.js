@@ -1318,6 +1318,9 @@ class AppController {
                     case 'profit-analysis':
                         this.showProfitAnalysis();
                         break;
+                    case 'reports':
+                        this.renderReports();
+                        break;
                 }
             }
 
@@ -1349,7 +1352,7 @@ class AppController {
             getOutletManagerRestrictedSections() {
                 return [
                     'outlets', 'suppliers', 'purchase-orders', 'expenses', 'accounting',
-                    'liabilities', 'forecasting', 'loans', 'user-management', 'settings'
+                    'liabilities', 'forecasting', 'reports', 'loans', 'user-management', 'settings'
                 ];
             }
 
@@ -5825,7 +5828,246 @@ class AppController {
                 }
             }
             
-            // Show recurring expenses modal
+            renderReports() {
+                const quickPeriod = document.getElementById('reports-quick-period');
+                if (quickPeriod && !quickPeriod._bound) {
+                    quickPeriod._bound = true;
+                    quickPeriod.addEventListener('change', () => {
+                        const val = quickPeriod.value;
+                        if (!val) return;
+                        const startInput = document.getElementById('reports-start-date');
+                        const endInput = document.getElementById('reports-end-date');
+                        const today = new Date();
+                        const fmt = d => d.toISOString().split('T')[0];
+                        endInput.value = fmt(today);
+
+                        if (val === 'today') { startInput.value = fmt(today); }
+                        else if (val === 'week') { const d = new Date(today); d.setDate(d.getDate() - 7); startInput.value = fmt(d); }
+                        else if (val === 'month') { const d = new Date(today); d.setMonth(d.getMonth() - 1); startInput.value = fmt(d); }
+                        else if (val === 'quarter') { const d = new Date(today); d.setMonth(d.getMonth() - 3); startInput.value = fmt(d); }
+                        else if (val === 'year') { const d = new Date(today); d.setFullYear(d.getFullYear() - 1); startInput.value = fmt(d); }
+                        else if (val === 'all') { startInput.value = ''; endInput.value = ''; }
+                    });
+                }
+            }
+
+            getReportDateRange() {
+                return {
+                    start: document.getElementById('reports-start-date')?.value || '',
+                    end: document.getElementById('reports-end-date')?.value || ''
+                };
+            }
+
+            async generateReport(type, format) {
+                const dateRange = this.getReportDateRange();
+
+                try {
+                    switch (type) {
+                        case 'sales':
+                            if (format === 'pdf') window.pdfExport?.generateSalesReport(dateRange);
+                            else if (format === 'csv') window.exportService?.exportSalesReport(dateRange.start, dateRange.end);
+                            else if (format === 'excel') window.exportService?.exportComprehensiveReport(dateRange.start || '2000-01-01', dateRange.end || '2099-12-31');
+                            break;
+                        case 'inventory':
+                            if (format === 'pdf') window.pdfExport?.generateInventoryReport(dateRange);
+                            else if (format === 'csv') window.exportService?.exportInventoryReport();
+                            break;
+                        case 'financial':
+                            if (format === 'pdf') window.pdfExport?.generateFinancialStatement(dateRange);
+                            else if (format === 'csv') {
+                                const fData = this._buildFinancialCSVData(dateRange);
+                                window.exportService?.exportToCSV(fData, `financial-statement-${new Date().toISOString().split('T')[0]}.csv`);
+                            }
+                            break;
+                        case 'pnl':
+                            if (format === 'pdf') window.pdfExport?.generateProfitLossReport(dateRange);
+                            break;
+                        case 'expenses':
+                            if (format === 'pdf') window.pdfExport?.generateExpensesReport(dateRange);
+                            else if (format === 'csv') window.exportService?.exportExpensesReport(dateRange.start, dateRange.end);
+                            break;
+                        case 'cashflow':
+                            if (format === 'pdf') window.pdfExport?.generateCashFlowReport(dateRange);
+                            break;
+                        case 'tax':
+                            if (format === 'pdf') window.pdfExport?.generateTaxReport(dateRange);
+                            break;
+                        case 'ar-aging':
+                            if (format === 'pdf') window.pdfExport?.generateARAgingReport();
+                            break;
+                        case 'stock-valuation':
+                            if (format === 'pdf') window.pdfExport?.generateStockValuationReport();
+                            break;
+                        case 'customers':
+                            if (format === 'csv') window.exportService?.exportCustomersReport();
+                            break;
+                        case 'comprehensive':
+                            if (format === 'excel') window.exportService?.exportComprehensiveReport(dateRange.start || '2000-01-01', dateRange.end || '2099-12-31');
+                            break;
+                        case 'period-comparison':
+                            await this.showPeriodComparison();
+                            break;
+                        default:
+                            Utils.showToast('Unknown report type', 'warning');
+                    }
+                } catch (err) {
+                    console.error('Report generation error:', err);
+                    Utils.showToast('Failed to generate report: ' + err.message, 'error');
+                }
+            }
+
+            _buildFinancialCSVData(dateRange) {
+                let sales = [...state.allSales];
+                let expenses = [...state.allExpenses];
+                if (dateRange.start) { sales = sales.filter(s => s.date >= dateRange.start); expenses = expenses.filter(e => e.date >= dateRange.start); }
+                if (dateRange.end) { sales = sales.filter(s => s.date <= dateRange.end); expenses = expenses.filter(e => e.date <= dateRange.end); }
+
+                const revenue = sales.reduce((s, sl) => {
+                    const t = parseFloat(sl.total);
+                    return s + (isNaN(t) ? (parseFloat(sl.quantity) || 0) * (parseFloat(sl.price) || 0) : t);
+                }, 0);
+                const cogs = sales.reduce((s, sl) => {
+                    const p = state.allProducts.find(pr => pr.id === sl.productId || pr.name === sl.product);
+                    return s + ((parseFloat(p?.cost) || 0) * (parseInt(sl.quantity) || 0));
+                }, 0);
+                const totalExp = expenses.reduce((s, e) => s + (parseFloat(e.amount) || 0), 0);
+
+                return [
+                    { Line: 'Revenue', Amount: revenue.toFixed(2) },
+                    { Line: 'Cost of Goods Sold', Amount: cogs.toFixed(2) },
+                    { Line: 'Gross Profit', Amount: (revenue - cogs).toFixed(2) },
+                    { Line: 'Total Expenses', Amount: totalExp.toFixed(2) },
+                    { Line: 'Net Profit', Amount: (revenue - cogs - totalExp).toFixed(2) },
+                ];
+            }
+
+            async showPeriodComparison() {
+                const dateRange = this.getReportDateRange();
+                if (!dateRange.start || !dateRange.end) {
+                    Utils.showToast('Select start and end dates for period comparison', 'warning');
+                    return;
+                }
+
+                const container = document.getElementById('period-comparison-results');
+                const content = document.getElementById('period-comparison-content');
+                if (!container || !content) return;
+
+                container.style.display = 'block';
+                content.innerHTML = '<p style="color:#8899a6;"><i class="fas fa-spinner fa-spin"></i> Computing comparison...</p>';
+
+                try {
+                    const BACKEND_URL = window.BACKEND_URL || '';
+                    const resp = await fetch(`${BACKEND_URL}/api/reports/generate`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            report_type: 'period_comparison',
+                            sales_data: state.allSales,
+                            expenses_data: state.allExpenses,
+                            date_start: dateRange.start,
+                            date_end: dateRange.end,
+                        })
+                    });
+
+                    if (!resp.ok) throw new Error('Backend returned ' + resp.status);
+                    const result = await resp.json();
+                    const d = result.data;
+
+                    if (d.error) { content.innerHTML = `<p style="color:#dc3545;">${d.error}</p>`; return; }
+
+                    const arrow = (pct) => pct > 0 ? `<span style="color:#28a745;">+${pct}% <i class="fas fa-arrow-up"></i></span>` : pct < 0 ? `<span style="color:#dc3545;">${pct}% <i class="fas fa-arrow-down"></i></span>` : `<span style="color:#8899a6;">0%</span>`;
+
+                    content.innerHTML = `
+                        <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin-top:1rem;" class="comparison-grid">
+                            <div style="padding:1rem;background:rgba(0,123,255,0.08);border-radius:8px;">
+                                <h4 style="margin-bottom:0.5rem;">Current Period</h4>
+                                <p style="font-size:0.85rem;color:#8899a6;">${d.current_period.start} to ${d.current_period.end}</p>
+                                <p>Revenue: <strong>${Utils.formatCurrency(d.current_period.revenue)}</strong></p>
+                                <p>Expenses: <strong>${Utils.formatCurrency(d.current_period.expenses)}</strong></p>
+                                <p>Profit: <strong style="color:${d.current_period.profit >= 0 ? '#28a745' : '#dc3545'};">${Utils.formatCurrency(d.current_period.profit)}</strong></p>
+                                <p>Transactions: <strong>${d.current_period.transaction_count}</strong></p>
+                            </div>
+                            <div style="padding:1rem;background:rgba(108,117,125,0.08);border-radius:8px;">
+                                <h4 style="margin-bottom:0.5rem;">Previous Period</h4>
+                                <p style="font-size:0.85rem;color:#8899a6;">${d.previous_period.start} to ${d.previous_period.end}</p>
+                                <p>Revenue: <strong>${Utils.formatCurrency(d.previous_period.revenue)}</strong></p>
+                                <p>Expenses: <strong>${Utils.formatCurrency(d.previous_period.expenses)}</strong></p>
+                                <p>Profit: <strong style="color:${d.previous_period.profit >= 0 ? '#28a745' : '#dc3545'};">${Utils.formatCurrency(d.previous_period.profit)}</strong></p>
+                                <p>Transactions: <strong>${d.previous_period.transaction_count}</strong></p>
+                            </div>
+                        </div>
+                        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:0.75rem;margin-top:1rem;" class="comparison-changes">
+                            <div style="text-align:center;padding:0.75rem;background:rgba(255,255,255,0.03);border-radius:8px;">
+                                <div style="font-size:0.8rem;color:#8899a6;">Revenue</div>
+                                <div style="font-size:1.1rem;font-weight:bold;">${arrow(d.changes.revenue_pct)}</div>
+                            </div>
+                            <div style="text-align:center;padding:0.75rem;background:rgba(255,255,255,0.03);border-radius:8px;">
+                                <div style="font-size:0.8rem;color:#8899a6;">Expenses</div>
+                                <div style="font-size:1.1rem;font-weight:bold;">${arrow(d.changes.expenses_pct)}</div>
+                            </div>
+                            <div style="text-align:center;padding:0.75rem;background:rgba(255,255,255,0.03);border-radius:8px;">
+                                <div style="font-size:0.8rem;color:#8899a6;">Profit</div>
+                                <div style="font-size:1.1rem;font-weight:bold;">${arrow(d.changes.profit_pct)}</div>
+                            </div>
+                            <div style="text-align:center;padding:0.75rem;background:rgba(255,255,255,0.03);border-radius:8px;">
+                                <div style="font-size:0.8rem;color:#8899a6;">Transactions</div>
+                                <div style="font-size:1.1rem;font-weight:bold;">${arrow(d.changes.transactions_pct)}</div>
+                            </div>
+                        </div>
+                    `;
+                } catch (err) {
+                    console.warn('Backend comparison failed, computing client-side:', err);
+                    this._clientSidePeriodComparison(content, dateRange);
+                }
+            }
+
+            _clientSidePeriodComparison(content, dateRange) {
+                const sDate = new Date(dateRange.start);
+                const eDate = new Date(dateRange.end);
+                const days = Math.floor((eDate - sDate) / (1000 * 60 * 60 * 24));
+                const prevEnd = new Date(sDate); prevEnd.setDate(prevEnd.getDate() - 1);
+                const prevStart = new Date(prevEnd); prevStart.setDate(prevStart.getDate() - days);
+
+                const fmt = d => d.toISOString().split('T')[0];
+                const calc = (s, e) => {
+                    const fs = state.allSales.filter(sl => sl.date >= s && sl.date <= e);
+                    const fe = state.allExpenses.filter(ex => ex.date >= s && ex.date <= e);
+                    const rev = fs.reduce((sum, sl) => { const t = parseFloat(sl.total); return sum + (isNaN(t) ? (parseFloat(sl.quantity) || 0) * (parseFloat(sl.price) || 0) : t); }, 0);
+                    const exp = fe.reduce((sum, ex) => sum + (parseFloat(ex.amount) || 0), 0);
+                    return { revenue: rev, expenses: exp, profit: rev - exp, transactions: fs.length };
+                };
+
+                const cur = calc(dateRange.start, dateRange.end);
+                const prev = calc(fmt(prevStart), fmt(prevEnd));
+                const pct = (c, p) => p === 0 ? (c > 0 ? 100 : 0) : Math.round((c - p) / Math.abs(p) * 100 * 10) / 10;
+                const arrow = (v) => v > 0 ? `<span style="color:#28a745;">+${v}% <i class="fas fa-arrow-up"></i></span>` : v < 0 ? `<span style="color:#dc3545;">${v}% <i class="fas fa-arrow-down"></i></span>` : `<span style="color:#8899a6;">0%</span>`;
+
+                content.innerHTML = `
+                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin-top:1rem;" class="comparison-grid">
+                        <div style="padding:1rem;background:rgba(0,123,255,0.08);border-radius:8px;">
+                            <h4>Current Period</h4><p style="font-size:0.85rem;color:#8899a6;">${dateRange.start} to ${dateRange.end}</p>
+                            <p>Revenue: <strong>${Utils.formatCurrency(cur.revenue)}</strong></p>
+                            <p>Expenses: <strong>${Utils.formatCurrency(cur.expenses)}</strong></p>
+                            <p>Profit: <strong style="color:${cur.profit>=0?'#28a745':'#dc3545'};">${Utils.formatCurrency(cur.profit)}</strong></p>
+                            <p>Transactions: <strong>${cur.transactions}</strong></p>
+                        </div>
+                        <div style="padding:1rem;background:rgba(108,117,125,0.08);border-radius:8px;">
+                            <h4>Previous Period</h4><p style="font-size:0.85rem;color:#8899a6;">${fmt(prevStart)} to ${fmt(prevEnd)}</p>
+                            <p>Revenue: <strong>${Utils.formatCurrency(prev.revenue)}</strong></p>
+                            <p>Expenses: <strong>${Utils.formatCurrency(prev.expenses)}</strong></p>
+                            <p>Profit: <strong style="color:${prev.profit>=0?'#28a745':'#dc3545'};">${Utils.formatCurrency(prev.profit)}</strong></p>
+                            <p>Transactions: <strong>${prev.transactions}</strong></p>
+                        </div>
+                    </div>
+                    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:0.75rem;margin-top:1rem;" class="comparison-changes">
+                        <div style="text-align:center;padding:0.75rem;background:rgba(255,255,255,0.03);border-radius:8px;"><div style="font-size:0.8rem;color:#8899a6;">Revenue</div><div style="font-size:1.1rem;font-weight:bold;">${arrow(pct(cur.revenue,prev.revenue))}</div></div>
+                        <div style="text-align:center;padding:0.75rem;background:rgba(255,255,255,0.03);border-radius:8px;"><div style="font-size:0.8rem;color:#8899a6;">Expenses</div><div style="font-size:1.1rem;font-weight:bold;">${arrow(pct(cur.expenses,prev.expenses))}</div></div>
+                        <div style="text-align:center;padding:0.75rem;background:rgba(255,255,255,0.03);border-radius:8px;"><div style="font-size:0.8rem;color:#8899a6;">Profit</div><div style="font-size:1.1rem;font-weight:bold;">${arrow(pct(cur.profit,prev.profit))}</div></div>
+                        <div style="text-align:center;padding:0.75rem;background:rgba(255,255,255,0.03);border-radius:8px;"><div style="font-size:0.8rem;color:#8899a6;">Transactions</div><div style="font-size:1.1rem;font-weight:bold;">${arrow(pct(cur.transactions,prev.transactions))}</div></div>
+                    </div>
+                `;
+            }
+
             showRecurringExpensesModal() {
                 if (window.recurringExpenses) {
                     window.recurringExpenses.renderAddModal();
@@ -12414,6 +12656,198 @@ class AppController {
                 `;
             }
 
+            static buildReportsSection() {
+                return `
+                    <section id="reports" style="display:none;">
+                        <div class="card">
+                            <h3><i class="fas fa-file-alt"></i> Report Center</h3>
+                            <p style="color:#8899a6;margin-bottom:1rem;">Generate, preview and download professional reports. All amounts in Ghana Cedi (GHS).</p>
+
+                            <div style="display:grid;grid-template-columns:1fr 1fr auto;gap:0.75rem;align-items:end;margin-bottom:1.5rem;" class="reports-date-row">
+                                <div>
+                                    <label style="font-size:0.85rem;">Start Date</label>
+                                    <input type="date" id="reports-start-date">
+                                </div>
+                                <div>
+                                    <label style="font-size:0.85rem;">End Date</label>
+                                    <input type="date" id="reports-end-date">
+                                </div>
+                                <div>
+                                    <select id="reports-quick-period" style="min-width:130px;">
+                                        <option value="">Quick select...</option>
+                                        <option value="today">Today</option>
+                                        <option value="week">This Week</option>
+                                        <option value="month">This Month</option>
+                                        <option value="quarter">This Quarter</option>
+                                        <option value="year">This Year</option>
+                                        <option value="all">All Time</option>
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Financial Reports -->
+                        <div class="card">
+                            <h3 style="margin-bottom:1rem;"><i class="fas fa-balance-scale" style="color:#007bff;"></i> Financial Reports</h3>
+                            <div class="reports-grid" id="reports-financial-grid">
+                                <div class="report-card" data-report="financial">
+                                    <div class="report-icon" style="background:linear-gradient(135deg,#007bff,#0056b3);"><i class="fas fa-file-invoice-dollar"></i></div>
+                                    <div class="report-info">
+                                        <h4>Financial Statement</h4>
+                                        <p>Income statement with revenue, COGS, expenses, and net profit</p>
+                                    </div>
+                                    <div class="report-actions">
+                                        <button onclick="appController.generateReport('financial','pdf')" title="PDF"><i class="fas fa-file-pdf"></i></button>
+                                        <button onclick="appController.generateReport('financial','csv')" title="CSV"><i class="fas fa-file-csv"></i></button>
+                                    </div>
+                                </div>
+                                <div class="report-card" data-report="pnl">
+                                    <div class="report-icon" style="background:linear-gradient(135deg,#28a745,#1e7e34);"><i class="fas fa-chart-bar"></i></div>
+                                    <div class="report-info">
+                                        <h4>Profit & Loss</h4>
+                                        <p>Revenue, cost of goods sold, gross margin, operating expenses</p>
+                                    </div>
+                                    <div class="report-actions">
+                                        <button onclick="appController.generateReport('pnl','pdf')" title="PDF"><i class="fas fa-file-pdf"></i></button>
+                                    </div>
+                                </div>
+                                <div class="report-card" data-report="cashflow">
+                                    <div class="report-icon" style="background:linear-gradient(135deg,#17a2b8,#117a8b);"><i class="fas fa-money-bill-wave"></i></div>
+                                    <div class="report-info">
+                                        <h4>Cash Flow Statement</h4>
+                                        <p>Operating, investing, and financing cash flows with monthly breakdown</p>
+                                    </div>
+                                    <div class="report-actions">
+                                        <button onclick="appController.generateReport('cashflow','pdf')" title="PDF"><i class="fas fa-file-pdf"></i></button>
+                                    </div>
+                                </div>
+                                <div class="report-card" data-report="tax">
+                                    <div class="report-icon" style="background:linear-gradient(135deg,#ffc107,#d39e00);"><i class="fas fa-percentage"></i></div>
+                                    <div class="report-info">
+                                        <h4>Tax / VAT Summary</h4>
+                                        <p>Output tax collected, input tax on expenses, net payable, rate breakdown</p>
+                                    </div>
+                                    <div class="report-actions">
+                                        <button onclick="appController.generateReport('tax','pdf')" title="PDF"><i class="fas fa-file-pdf"></i></button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Sales & Inventory Reports -->
+                        <div class="card">
+                            <h3 style="margin-bottom:1rem;"><i class="fas fa-shopping-cart" style="color:#28a745;"></i> Sales & Inventory</h3>
+                            <div class="reports-grid">
+                                <div class="report-card" data-report="sales">
+                                    <div class="report-icon" style="background:linear-gradient(135deg,#007bff,#0056b3);"><i class="fas fa-chart-line"></i></div>
+                                    <div class="report-info">
+                                        <h4>Sales Report</h4>
+                                        <p>All transactions with product, customer, quantity, and totals</p>
+                                    </div>
+                                    <div class="report-actions">
+                                        <button onclick="appController.generateReport('sales','pdf')" title="PDF"><i class="fas fa-file-pdf"></i></button>
+                                        <button onclick="appController.generateReport('sales','csv')" title="CSV"><i class="fas fa-file-csv"></i></button>
+                                        <button onclick="appController.generateReport('sales','excel')" title="Excel"><i class="fas fa-file-excel"></i></button>
+                                    </div>
+                                </div>
+                                <div class="report-card" data-report="inventory">
+                                    <div class="report-icon" style="background:linear-gradient(135deg,#28a745,#1e7e34);"><i class="fas fa-boxes"></i></div>
+                                    <div class="report-info">
+                                        <h4>Inventory Report</h4>
+                                        <p>Current stock levels, cost and retail values by product</p>
+                                    </div>
+                                    <div class="report-actions">
+                                        <button onclick="appController.generateReport('inventory','pdf')" title="PDF"><i class="fas fa-file-pdf"></i></button>
+                                        <button onclick="appController.generateReport('inventory','csv')" title="CSV"><i class="fas fa-file-csv"></i></button>
+                                    </div>
+                                </div>
+                                <div class="report-card" data-report="expenses">
+                                    <div class="report-icon" style="background:linear-gradient(135deg,#dc3545,#bd2130);"><i class="fas fa-credit-card"></i></div>
+                                    <div class="report-info">
+                                        <h4>Expenses Report</h4>
+                                        <p>Operating expenses by category with detailed transaction list</p>
+                                    </div>
+                                    <div class="report-actions">
+                                        <button onclick="appController.generateReport('expenses','pdf')" title="PDF"><i class="fas fa-file-pdf"></i></button>
+                                        <button onclick="appController.generateReport('expenses','csv')" title="CSV"><i class="fas fa-file-csv"></i></button>
+                                    </div>
+                                </div>
+                                <div class="report-card" data-report="stock-valuation">
+                                    <div class="report-icon" style="background:linear-gradient(135deg,#6f42c1,#563d7c);"><i class="fas fa-warehouse"></i></div>
+                                    <div class="report-info">
+                                        <h4>Stock Valuation</h4>
+                                        <p>Category breakdown, cost vs. retail values, stock status alerts</p>
+                                    </div>
+                                    <div class="report-actions">
+                                        <button onclick="appController.generateReport('stock-valuation','pdf')" title="PDF"><i class="fas fa-file-pdf"></i></button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Receivables & Customer Reports -->
+                        <div class="card">
+                            <h3 style="margin-bottom:1rem;"><i class="fas fa-users" style="color:#dc3545;"></i> Receivables & Customers</h3>
+                            <div class="reports-grid">
+                                <div class="report-card" data-report="ar-aging">
+                                    <div class="report-icon" style="background:linear-gradient(135deg,#dc3545,#bd2130);"><i class="fas fa-user-clock"></i></div>
+                                    <div class="report-info">
+                                        <h4>AR Aging Report</h4>
+                                        <p>Outstanding balances by aging bucket (current, 30, 60, 90+ days)</p>
+                                    </div>
+                                    <div class="report-actions">
+                                        <button onclick="appController.generateReport('ar-aging','pdf')" title="PDF"><i class="fas fa-file-pdf"></i></button>
+                                    </div>
+                                </div>
+                                <div class="report-card" data-report="customers">
+                                    <div class="report-icon" style="background:linear-gradient(135deg,#17a2b8,#117a8b);"><i class="fas fa-address-book"></i></div>
+                                    <div class="report-info">
+                                        <h4>Customer List</h4>
+                                        <p>All customers with contact info, total purchases, and last activity</p>
+                                    </div>
+                                    <div class="report-actions">
+                                        <button onclick="appController.generateReport('customers','csv')" title="CSV"><i class="fas fa-file-csv"></i></button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Comprehensive Report -->
+                        <div class="card">
+                            <h3 style="margin-bottom:1rem;"><i class="fas fa-layer-group" style="color:#6f42c1;"></i> Comprehensive</h3>
+                            <div class="reports-grid">
+                                <div class="report-card" data-report="comprehensive">
+                                    <div class="report-icon" style="background:linear-gradient(135deg,#6f42c1,#563d7c);"><i class="fas fa-file-excel"></i></div>
+                                    <div class="report-info">
+                                        <h4>Comprehensive Report (Excel)</h4>
+                                        <p>Multi-sheet workbook with Sales, Expenses, Inventory, and Summary</p>
+                                    </div>
+                                    <div class="report-actions">
+                                        <button onclick="appController.generateReport('comprehensive','excel')" title="Excel"><i class="fas fa-file-excel"></i></button>
+                                    </div>
+                                </div>
+                                <div class="report-card" data-report="period-comparison">
+                                    <div class="report-icon" style="background:linear-gradient(135deg,#fd7e14,#dc6502);"><i class="fas fa-exchange-alt"></i></div>
+                                    <div class="report-info">
+                                        <h4>Period Comparison</h4>
+                                        <p>Compare current period vs. previous equivalent (revenue, expenses, profit)</p>
+                                    </div>
+                                    <div class="report-actions">
+                                        <button onclick="appController.generateReport('period-comparison','view')" title="View"><i class="fas fa-eye"></i></button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Period Comparison Results -->
+                        <div class="card" id="period-comparison-results" style="display:none;">
+                            <h3><i class="fas fa-exchange-alt"></i> Period Comparison</h3>
+                            <div id="period-comparison-content"></div>
+                        </div>
+                    </section>
+                `;
+            }
+
             static buildAllSections() {
                 return `
                     ${this.buildDashboardSection()}
@@ -12426,6 +12860,7 @@ class AppController {
                     ${this.buildAccountingSection()}
                     ${this.buildLiabilitiesSection()}
                     ${this.buildForecastingSection()}
+                    ${this.buildReportsSection()}
                     ${this.buildOutletsSection()}
                     ${this.buildConsignmentsSection()}
                     ${this.buildSettlementsSection()}

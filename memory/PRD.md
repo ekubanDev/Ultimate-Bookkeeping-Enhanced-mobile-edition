@@ -149,13 +149,60 @@ Enhance the Ultimate Bookkeeping Firebase application with:
 - `package.json` - Mobile build scripts
 - `.gitignore` - Native project exclusions
 
+### Feature 3: Better Reporting Capabilities ✅
+**Date**: 2026-03-12
+**Status**: COMPLETED
+
+#### What's Been Implemented:
+
+1. **Unified Report Center (new section)**
+   - Dedicated "Reports" navigation section with categorised report cards
+   - Universal date range picker with quick-select presets (Today, Week, Month, Quarter, Year, All)
+   - Multi-format export buttons (PDF, CSV, Excel) per report type
+   - Grouped into Financial, Sales & Inventory, Receivables & Customers, Comprehensive
+   - Admin-only access (restricted from outlet managers)
+
+2. **New Report Types**
+   - **Expenses Report PDF** — Category summary with percentages + detailed transaction table
+   - **Cash Flow Statement PDF** — Operating/Investing/Financing sections + monthly breakdown
+   - **Tax / VAT Summary PDF** — Output tax, input tax, net payable, rate breakdown
+   - **AR Aging Report PDF** — Outstanding balances by aging bucket (current, 30d, 60d, 90d+) with customer details
+   - **Customer Account Statement PDF** — Per-customer transaction history with running totals
+   - **Stock Valuation Report PDF** — Category-level and product-level valuation, cost vs. retail, stock status alerts
+
+3. **Period Comparison**
+   - Compare any period vs. equivalent previous period
+   - Revenue, expenses, profit, and transaction count with % change arrows
+   - Backend endpoint `/api/reports/generate` with client-side fallback
+
+4. **Backend Report Endpoints**
+   - `POST /api/reports/generate` — Supports `tax_summary`, `ar_aging`, `period_comparison` report types
+   - Computed tax analysis with rate breakdowns
+   - AR aging by customer with bucket classification
+   - Period-over-period comparison with percentage changes
+   - Optional AI-powered executive summary for each report
+
+5. **Fixes & Improvements**
+   - Removed 100-row cap on sales PDF (now exports all transactions)
+   - PDF headers now use business name from settings instead of hardcoded "Ultimate Firebase Bookkeeping"
+   - Updated PDF export modal with 2-column grid and all 9 report types
+   - Renamed nav item "Export Reports" → "Quick Export" to differentiate from Report Center
+
+#### Files Changed:
+- `backend/server.py` — Added ReportRequest model + report endpoints + computation helpers
+- `frontend/public/bookkeeping/js/services/pdf-export.js` — 6 new report generators + business name fix + cap removal
+- `frontend/public/bookkeeping/js/controllers/app-controller.js` — Reports section template + renderReports + generateReport + period comparison
+- `frontend/public/bookkeeping/css/responsive.css` — Report card grid + responsive styles
+- `frontend/public/bookkeeping/index.html` — Added Reports nav item
+- `frontend/public/bookkeeping/sw.js` — Cache version bumped to v3
+
 ---
 
 ## Prioritized Backlog
 
 ### P0 (Next Up)
 - [x] Feature 2: AI-powered insights/forecasting (advanced) - COMPLETED
-- [ ] Feature 3: Better reporting capabilities
+- [x] Feature 3: Better reporting capabilities - COMPLETED
 
 ### P1
 - [ ] Feature 4: UI/UX improvements - Complete interface redesign
@@ -163,21 +210,21 @@ Enhance the Ultimate Bookkeeping Firebase application with:
 
 ### P2
 - [x] Mobile responsive optimizations (COMPLETED - PWA + Capacitor)
+- [x] Export reports to PDF/Excel - COMPLETED (part of Feature 3)
 - [ ] Additional chart types
-- [ ] Export reports to PDF/Excel
 
 ---
 
 ## Next Tasks
-1. Continue with Feature 2: Advanced AI-powered forecasting
-   - Implement predictive analytics
-   - Add trend analysis
-   - Seasonal pattern detection
-   
-2. Feature 3: Enhanced reporting
-   - Customizable date ranges
-   - Multiple export formats
-   - Scheduled reports
+1. Feature 4: UI/UX improvements
+   - Modern interface redesign
+   - Improved mobile navigation
+   - Better form layouts
+
+2. Feature 5: Performance optimization
+   - Lazy loading for sections
+   - Data pagination
+   - Bundle optimization
 
 ---
 

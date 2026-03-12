@@ -1,4 +1,4 @@
-const CACHE_VERSION = 'ubk-v2';
+const CACHE_VERSION = 'ubk-v3';
 const STATIC_CACHE = `static-${CACHE_VERSION}`;
 const DYNAMIC_CACHE = `dynamic-${CACHE_VERSION}`;
 const CDN_CACHE = `cdn-${CACHE_VERSION}`;

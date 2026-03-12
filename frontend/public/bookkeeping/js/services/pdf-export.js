@@ -99,8 +99,7 @@ class PDFExportService {
             doc.text(`Total Items Sold: ${totalQuantity}`, 14, 58);
             doc.text(`Number of Transactions: ${sales.length}`, 14, 66);
 
-            // Sales table
-            const tableData = sales.slice(0, 100).map(s => [
+            const tableData = sales.map(s => [
                 s.date,
                 s.product || s.productName,
                 s.customer || s.customerName || 'Walk-in',
@@ -600,25 +599,26 @@ class PDFExportService {
         }
     }
 
-    /**
-     * Add header to PDF
-     */
+    getBusinessName() {
+        try {
+            const saved = JSON.parse(localStorage.getItem('business_settings') || '{}');
+            return saved.businessName || saved.business_name || 'Ultimate Bookkeeping';
+        } catch { return 'Ultimate Bookkeeping'; }
+    }
+
     addHeader(doc, title) {
-        // Company name
+        const biz = this.getBusinessName();
         doc.setFontSize(18);
         doc.setFont(undefined, 'bold');
-        doc.text('Ultimate Firebase Bookkeeping', 105, 15, { align: 'center' });
-        
-        // Report title
+        doc.text(biz, 105, 15, { align: 'center' });
+
         doc.setFontSize(14);
         doc.setFont(undefined, 'normal');
         doc.text(title, 105, 25, { align: 'center' });
-        
-        // Date generated and currency
+
         doc.setFontSize(10);
         doc.text(`Generated: ${new Date().toLocaleString()} | Currency: Ghana Cedi (GHS)`, 105, 33, { align: 'center' });
-        
-        // Line separator
+
         doc.setLineWidth(0.5);
         doc.line(14, 37, 196, 37);
     }
@@ -785,8 +785,550 @@ class PDFExportService {
     }
 
     /**
-     * Show export options modal
+     * Generate Expenses Report PDF
      */
+    async generateExpensesReport(dateRange = {}) {
+        try {
+            await this.loadJSPDF();
+            const { jsPDF } = window.jspdf;
+            const doc = new jsPDF();
+
+            this.addHeader(doc, 'Expenses Report');
+            this.addDateRange(doc, dateRange);
+
+            let expenses = [...state.allExpenses];
+            if (dateRange.start) expenses = expenses.filter(e => e.date >= dateRange.start);
+            if (dateRange.end) expenses = expenses.filter(e => e.date <= dateRange.end);
+
+            const operating = expenses.filter(e => !this.isDebtPayment(e));
+            const debt = expenses.filter(e => this.isDebtPayment(e));
+            const totalOp = operating.reduce((s, e) => s + (parseFloat(e.amount) || 0), 0);
+            const totalDebt = debt.reduce((s, e) => s + (parseFloat(e.amount) || 0), 0);
+
+            const byCategory = {};
+            operating.forEach(e => {
+                const cat = e.category || 'Uncategorised';
+                byCategory[cat] = (byCategory[cat] || 0) + (parseFloat(e.amount) || 0);
+            });
+
+            const startY = (dateRange.start || dateRange.end) ? 50 : 45;
+            doc.setFontSize(12);
+            doc.text(`Total Operating Expenses: ${this.formatGHS(totalOp)}`, 14, startY);
+            doc.text(`Debt/Liability Payments: ${this.formatGHS(totalDebt)}`, 14, startY + 8);
+            doc.text(`Number of Entries: ${expenses.length}`, 14, startY + 16);
+
+            const summaryData = Object.entries(byCategory)
+                .sort((a, b) => b[1] - a[1])
+                .map(([cat, amt]) => [cat, expenses.filter(e => (e.category || 'Uncategorised') === cat).length.toString(), this.formatGHS(amt), totalOp > 0 ? ((amt / totalOp) * 100).toFixed(1) + '%' : '0%']);
+
+            doc.autoTable({
+                startY: startY + 26,
+                head: [['Category', 'Count', 'Amount (GHS)', '% of Total']],
+                body: summaryData,
+                styles: { fontSize: 9 },
+                headStyles: { fillColor: [220, 53, 69] },
+            });
+
+            const detailY = doc.lastAutoTable.finalY + 10;
+            doc.setFontSize(11);
+            doc.setFont(undefined, 'bold');
+            doc.text('Detailed Transactions', 14, detailY);
+            doc.setFont(undefined, 'normal');
+
+            const tableData = expenses.map(e => [
+                e.date || '',
+                (e.description || '').substring(0, 40),
+                e.category || 'N/A',
+                this.isDebtPayment(e) ? 'Debt' : 'Operating',
+                this.formatGHS(e.amount)
+            ]);
+
+            doc.autoTable({
+                startY: detailY + 4,
+                head: [['Date', 'Description', 'Category', 'Type', 'Amount (GHS)']],
+                body: tableData,
+                styles: { fontSize: 8 },
+                headStyles: { fillColor: [220, 53, 69] },
+            });
+
+            this.addFooter(doc);
+            doc.save(`expenses-report-${new Date().toISOString().split('T')[0]}.pdf`);
+            Utils.showToast('Expenses report downloaded', 'success');
+        } catch (error) {
+            console.error('Error generating expenses PDF:', error);
+            Utils.showToast('Failed to generate PDF: ' + error.message, 'error');
+        }
+    }
+
+    /**
+     * Generate Cash Flow Statement PDF
+     */
+    async generateCashFlowReport(dateRange = {}) {
+        try {
+            await this.loadJSPDF();
+            const { jsPDF } = window.jspdf;
+            const doc = new jsPDF();
+
+            this.addHeader(doc, 'Cash Flow Statement');
+            this.addDateRange(doc, dateRange);
+
+            let sales = [...state.allSales];
+            let expenses = [...state.allExpenses];
+            if (dateRange.start) {
+                sales = sales.filter(s => s.date >= dateRange.start);
+                expenses = expenses.filter(e => e.date >= dateRange.start);
+            }
+            if (dateRange.end) {
+                sales = sales.filter(s => s.date <= dateRange.end);
+                expenses = expenses.filter(e => e.date <= dateRange.end);
+            }
+
+            const opExpenses = expenses.filter(e => !this.isDebtPayment(e));
+            const debtPayments = expenses.filter(e => this.isDebtPayment(e));
+
+            const cashFromSales = sales.reduce((s, sl) => s + this.getSaleTotal(sl), 0);
+            const cashToExpenses = opExpenses.reduce((s, e) => s + (parseFloat(e.amount) || 0), 0);
+            const cashToDebt = debtPayments.reduce((s, e) => s + (parseFloat(e.amount) || 0), 0);
+
+            const operatingCash = cashFromSales - cashToExpenses;
+            const inventoryCost = state.allProducts.reduce((s, p) => s + ((parseFloat(p.cost) || 0) * (parseInt(p.quantity) || 0)), 0);
+            const netCashFlow = operatingCash - cashToDebt;
+
+            const cfData = [
+                ['OPERATING ACTIVITIES', '', ''],
+                ['  Cash received from sales', '', this.formatGHS(cashFromSales)],
+                ['  Cash paid for operating expenses', '', `(${this.formatGHS(cashToExpenses)})`],
+                ['Net Cash from Operations', '', this.formatGHS(operatingCash)],
+                ['', '', ''],
+                ['INVESTING ACTIVITIES', '', ''],
+                ['  Inventory on hand (at cost)', '', `(${this.formatGHS(inventoryCost)})`],
+                ['', '', ''],
+                ['FINANCING ACTIVITIES', '', ''],
+                ['  Debt/Liability payments', '', `(${this.formatGHS(cashToDebt)})`],
+                ['', '', ''],
+                ['NET CASH FLOW', '', this.formatGHS(netCashFlow)],
+            ];
+
+            doc.autoTable({
+                startY: (dateRange.start || dateRange.end) ? 55 : 45,
+                body: cfData,
+                styles: { fontSize: 10 },
+                columnStyles: {
+                    0: { fontStyle: 'bold', cellWidth: 110 },
+                    1: { cellWidth: 30 },
+                    2: { halign: 'right', cellWidth: 45 }
+                },
+                didParseCell: (data) => {
+                    const label = data.row.raw[0];
+                    if (label === 'Net Cash from Operations' || label === 'NET CASH FLOW') {
+                        data.cell.styles.fillColor = [240, 240, 240];
+                        data.cell.styles.fontStyle = 'bold';
+                    }
+                    if (label.startsWith('OPERATING') || label.startsWith('INVESTING') || label.startsWith('FINANCING')) {
+                        data.cell.styles.fillColor = [0, 123, 255];
+                        data.cell.styles.textColor = [255, 255, 255];
+                    }
+                }
+            });
+
+            const monthlyY = doc.lastAutoTable.finalY + 12;
+            doc.setFontSize(11);
+            doc.setFont(undefined, 'bold');
+            doc.text('Monthly Breakdown', 14, monthlyY);
+            doc.setFont(undefined, 'normal');
+
+            const monthly = {};
+            sales.forEach(s => {
+                const m = (s.date || '').substring(0, 7);
+                if (!m) return;
+                if (!monthly[m]) monthly[m] = { revenue: 0, expenses: 0, debt: 0 };
+                monthly[m].revenue += this.getSaleTotal(s);
+            });
+            opExpenses.forEach(e => {
+                const m = (e.date || '').substring(0, 7);
+                if (!m) return;
+                if (!monthly[m]) monthly[m] = { revenue: 0, expenses: 0, debt: 0 };
+                monthly[m].expenses += parseFloat(e.amount) || 0;
+            });
+            debtPayments.forEach(e => {
+                const m = (e.date || '').substring(0, 7);
+                if (!m) return;
+                if (!monthly[m]) monthly[m] = { revenue: 0, expenses: 0, debt: 0 };
+                monthly[m].debt += parseFloat(e.amount) || 0;
+            });
+
+            const monthlyRows = Object.entries(monthly).sort().map(([m, d]) => [
+                m, this.formatGHS(d.revenue), `(${this.formatGHS(d.expenses)})`, `(${this.formatGHS(d.debt)})`, this.formatGHS(d.revenue - d.expenses - d.debt)
+            ]);
+
+            if (monthlyRows.length > 0) {
+                doc.autoTable({
+                    startY: monthlyY + 4,
+                    head: [['Month', 'Revenue', 'Expenses', 'Debt', 'Net Cash']],
+                    body: monthlyRows,
+                    styles: { fontSize: 8 },
+                    headStyles: { fillColor: [0, 123, 255] },
+                });
+            }
+
+            this.addFooter(doc);
+            doc.save(`cashflow-statement-${new Date().toISOString().split('T')[0]}.pdf`);
+            Utils.showToast('Cash flow statement downloaded', 'success');
+        } catch (error) {
+            console.error('Error generating cash flow PDF:', error);
+            Utils.showToast('Failed to generate PDF: ' + error.message, 'error');
+        }
+    }
+
+    /**
+     * Generate Tax / VAT Summary PDF
+     */
+    async generateTaxReport(dateRange = {}) {
+        try {
+            await this.loadJSPDF();
+            const { jsPDF } = window.jspdf;
+            const doc = new jsPDF();
+
+            this.addHeader(doc, 'Tax / VAT Summary Report');
+            this.addDateRange(doc, dateRange);
+
+            let sales = [...state.allSales];
+            let expenses = [...state.allExpenses];
+            if (dateRange.start) {
+                sales = sales.filter(s => s.date >= dateRange.start);
+                expenses = expenses.filter(e => e.date >= dateRange.start);
+            }
+            if (dateRange.end) {
+                sales = sales.filter(s => s.date <= dateRange.end);
+                expenses = expenses.filter(e => e.date <= dateRange.end);
+            }
+
+            let taxCollected = 0, taxableSales = 0, exemptSales = 0;
+            const byRate = {};
+
+            sales.forEach(s => {
+                const rate = parseFloat(s.tax) || 0;
+                const qty = parseFloat(s.quantity) || 1;
+                const price = parseFloat(s.price) || 0;
+                const discount = parseFloat(s.discount) || 0;
+                const subtotal = qty * price * (1 - discount / 100);
+                const taxAmt = subtotal * (rate / 100);
+
+                if (rate > 0) {
+                    taxableSales += subtotal;
+                    taxCollected += taxAmt;
+                    const key = `${rate}%`;
+                    if (!byRate[key]) byRate[key] = { count: 0, taxable: 0, tax: 0 };
+                    byRate[key].count++;
+                    byRate[key].taxable += subtotal;
+                    byRate[key].tax += taxAmt;
+                } else {
+                    exemptSales += subtotal;
+                }
+            });
+
+            let inputTax = 0;
+            expenses.forEach(e => {
+                const eTax = parseFloat(e.tax) || 0;
+                if (eTax > 0) inputTax += (parseFloat(e.amount) || 0) * (eTax / 100);
+            });
+
+            const netPayable = taxCollected - inputTax;
+
+            const startY = (dateRange.start || dateRange.end) ? 52 : 45;
+            doc.setFontSize(11);
+            doc.setFont(undefined, 'bold');
+            doc.text('Tax Overview', 14, startY);
+            doc.setFont(undefined, 'normal');
+
+            const overviewData = [
+                ['Total Sales Revenue', this.formatGHS(taxableSales + exemptSales)],
+                ['Taxable Sales', this.formatGHS(taxableSales)],
+                ['Tax-Exempt Sales', this.formatGHS(exemptSales)],
+                ['', ''],
+                ['Output Tax (collected from sales)', this.formatGHS(taxCollected)],
+                ['Input Tax (paid on expenses)', `(${this.formatGHS(inputTax)})`],
+                ['Net Tax Payable / (Refundable)', this.formatGHS(netPayable)],
+            ];
+
+            doc.autoTable({
+                startY: startY + 4,
+                body: overviewData,
+                styles: { fontSize: 10 },
+                columnStyles: {
+                    0: { cellWidth: 120 },
+                    1: { halign: 'right', cellWidth: 60 }
+                },
+                didParseCell: (data) => {
+                    if (data.row.raw[0].startsWith('Net Tax')) {
+                        data.cell.styles.fillColor = netPayable >= 0 ? [255, 243, 205] : [209, 236, 241];
+                        data.cell.styles.fontStyle = 'bold';
+                    }
+                }
+            });
+
+            if (Object.keys(byRate).length > 0) {
+                const breakY = doc.lastAutoTable.finalY + 10;
+                doc.setFontSize(11);
+                doc.setFont(undefined, 'bold');
+                doc.text('Tax Rate Breakdown', 14, breakY);
+                doc.setFont(undefined, 'normal');
+
+                const breakdownRows = Object.entries(byRate)
+                    .sort((a, b) => parseFloat(b[0]) - parseFloat(a[0]))
+                    .map(([rate, d]) => [rate, d.count.toString(), this.formatGHS(d.taxable), this.formatGHS(d.tax)]);
+
+                doc.autoTable({
+                    startY: breakY + 4,
+                    head: [['Tax Rate', 'Transactions', 'Taxable Amount (GHS)', 'Tax Collected (GHS)']],
+                    body: breakdownRows,
+                    styles: { fontSize: 9 },
+                    headStyles: { fillColor: [255, 193, 7], textColor: [0, 0, 0] },
+                });
+            }
+
+            this.addFooter(doc);
+            doc.save(`tax-report-${new Date().toISOString().split('T')[0]}.pdf`);
+            Utils.showToast('Tax report downloaded', 'success');
+        } catch (error) {
+            console.error('Error generating tax PDF:', error);
+            Utils.showToast('Failed to generate PDF: ' + error.message, 'error');
+        }
+    }
+
+    /**
+     * Generate Accounts Receivable Aging PDF
+     */
+    async generateARAgingReport() {
+        try {
+            await this.loadJSPDF();
+            const { jsPDF } = window.jspdf;
+            const doc = new jsPDF('l');
+
+            this.addHeader(doc, 'Accounts Receivable Aging Report');
+            const pageW = doc.internal.pageSize.getWidth();
+
+            const today = new Date();
+            const customers = state.allCustomers.filter(c => (parseFloat(c.balance) || 0) > 0);
+            const buckets = { current: [], days30: [], days60: [], days90: [] };
+
+            customers.forEach(c => {
+                const bal = parseFloat(c.balance) || 0;
+                let ageDays = 999;
+                const lp = c.lastPurchase || c.last_purchase || '';
+                if (lp) {
+                    try {
+                        const lpDate = lp.includes('T') ? new Date(lp) : new Date(lp + 'T00:00:00');
+                        ageDays = Math.floor((today - lpDate) / (1000 * 60 * 60 * 24));
+                    } catch { ageDays = 999; }
+                }
+
+                const entry = [c.name || 'Unknown', c.email || '', c.phone || '', this.formatGHS(bal), `${ageDays}d`, lp ? lp.substring(0, 10) : 'N/A'];
+                if (ageDays <= 30) buckets.current.push(entry);
+                else if (ageDays <= 60) buckets.days30.push(entry);
+                else if (ageDays <= 90) buckets.days60.push(entry);
+                else buckets.days90.push(entry);
+            });
+
+            const totalReceivable = customers.reduce((s, c) => s + (parseFloat(c.balance) || 0), 0);
+
+            const summaryData = [
+                ['Current (0-30 days)', buckets.current.length.toString(), this.formatGHS(buckets.current.reduce((s, r) => s + parseFloat(r[3].replace('GHS ', '').replace(',', '')), 0))],
+                ['31-60 days', buckets.days30.length.toString(), this.formatGHS(buckets.days30.reduce((s, r) => s + parseFloat(r[3].replace('GHS ', '').replace(',', '')), 0))],
+                ['61-90 days', buckets.days60.length.toString(), this.formatGHS(buckets.days60.reduce((s, r) => s + parseFloat(r[3].replace('GHS ', '').replace(',', '')), 0))],
+                ['Over 90 days', buckets.days90.length.toString(), this.formatGHS(buckets.days90.reduce((s, r) => s + parseFloat(r[3].replace('GHS ', '').replace(',', '')), 0))],
+                ['TOTAL', customers.length.toString(), this.formatGHS(totalReceivable)],
+            ];
+
+            doc.setFontSize(12);
+            doc.text(`Total Receivable: ${this.formatGHS(totalReceivable)}  |  Customers with balances: ${customers.length}`, 14, 45);
+
+            doc.autoTable({
+                startY: 52,
+                head: [['Aging Bucket', 'Customers', 'Amount (GHS)']],
+                body: summaryData,
+                styles: { fontSize: 10 },
+                headStyles: { fillColor: [220, 53, 69] },
+                didParseCell: (data) => {
+                    if (data.row.raw[0] === 'TOTAL') {
+                        data.cell.styles.fontStyle = 'bold';
+                        data.cell.styles.fillColor = [240, 240, 240];
+                    }
+                    if (data.row.raw[0] === 'Over 90 days') {
+                        data.cell.styles.textColor = [220, 53, 69];
+                    }
+                }
+            });
+
+            const allEntries = [
+                ...buckets.current.map(e => ['Current', ...e]),
+                ...buckets.days30.map(e => ['31-60d', ...e]),
+                ...buckets.days60.map(e => ['61-90d', ...e]),
+                ...buckets.days90.map(e => ['90d+', ...e]),
+            ];
+
+            if (allEntries.length > 0) {
+                doc.autoTable({
+                    startY: doc.lastAutoTable.finalY + 10,
+                    head: [['Bucket', 'Customer', 'Email', 'Phone', 'Balance (GHS)', 'Age', 'Last Purchase']],
+                    body: allEntries,
+                    styles: { fontSize: 8 },
+                    headStyles: { fillColor: [220, 53, 69] },
+                    didParseCell: (data) => {
+                        if (data.row.raw[0] === '90d+') data.cell.styles.textColor = [220, 53, 69];
+                    }
+                });
+            }
+
+            this.addFooter(doc);
+            doc.save(`ar-aging-report-${new Date().toISOString().split('T')[0]}.pdf`);
+            Utils.showToast('AR aging report downloaded', 'success');
+        } catch (error) {
+            console.error('Error generating AR aging PDF:', error);
+            Utils.showToast('Failed to generate PDF: ' + error.message, 'error');
+        }
+    }
+
+    /**
+     * Generate Customer Statement PDF for a specific customer
+     */
+    async generateCustomerStatement(customerId) {
+        try {
+            await this.loadJSPDF();
+            const { jsPDF } = window.jspdf;
+            const doc = new jsPDF();
+
+            const customer = state.allCustomers.find(c => c.id === customerId);
+            if (!customer) throw new Error('Customer not found');
+
+            this.addHeader(doc, 'Customer Account Statement');
+
+            doc.setFontSize(11);
+            let y = 45;
+            doc.setFont(undefined, 'bold');
+            doc.text('Customer Details', 14, y);
+            doc.setFont(undefined, 'normal');
+            y += 7;
+            doc.text(`Name: ${customer.name || 'N/A'}`, 14, y);
+            doc.text(`Email: ${customer.email || 'N/A'}`, 110, y);
+            y += 6;
+            doc.text(`Phone: ${customer.phone || 'N/A'}`, 14, y);
+            doc.text(`Balance: ${this.formatGHS(customer.balance || 0)}`, 110, y);
+            y += 10;
+
+            const customerSales = state.allSales
+                .filter(s => s.customerId === customerId || s.customer === customer.name)
+                .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+
+            const tableData = customerSales.map(s => [
+                s.date || '',
+                s.product || s.productName || '',
+                (s.quantity || 0).toString(),
+                this.formatGHS(s.price || 0),
+                this.formatGHS(this.getSaleTotal(s)),
+            ]);
+
+            const totalSpent = customerSales.reduce((s, sl) => s + this.getSaleTotal(sl), 0);
+
+            doc.autoTable({
+                startY: y,
+                head: [['Date', 'Product', 'Qty', 'Price (GHS)', 'Total (GHS)']],
+                body: tableData,
+                styles: { fontSize: 8 },
+                headStyles: { fillColor: [0, 123, 255] },
+                foot: [['', '', '', 'Total Purchased', this.formatGHS(totalSpent)]],
+                footStyles: { fillColor: [240, 240, 240], fontStyle: 'bold' }
+            });
+
+            this.addFooter(doc);
+            doc.save(`statement-${(customer.name || 'customer').replace(/\s+/g, '-')}-${new Date().toISOString().split('T')[0]}.pdf`);
+            Utils.showToast('Customer statement downloaded', 'success');
+        } catch (error) {
+            console.error('Error generating customer statement PDF:', error);
+            Utils.showToast('Failed to generate PDF: ' + error.message, 'error');
+        }
+    }
+
+    /**
+     * Generate Stock Valuation Report PDF
+     */
+    async generateStockValuationReport() {
+        try {
+            await this.loadJSPDF();
+            const { jsPDF } = window.jspdf;
+            const doc = new jsPDF('l');
+
+            this.addHeader(doc, 'Stock Valuation & Movement Report');
+
+            const products = [...state.allProducts].sort((a, b) => (a.category || '').localeCompare(b.category || ''));
+            const totalCost = products.reduce((s, p) => s + ((parseFloat(p.cost) || 0) * (parseInt(p.quantity) || 0)), 0);
+            const totalRetail = products.reduce((s, p) => s + ((parseFloat(p.price) || 0) * (parseInt(p.quantity) || 0)), 0);
+            const lowStock = products.filter(p => (parseInt(p.quantity) || 0) <= (parseInt(p.minStock) || 10));
+            const outOfStock = products.filter(p => (parseInt(p.quantity) || 0) === 0);
+
+            doc.setFontSize(11);
+            doc.text(`Total Products: ${products.length}  |  Low Stock: ${lowStock.length}  |  Out of Stock: ${outOfStock.length}`, 14, 45);
+            doc.text(`Cost Value: ${this.formatGHS(totalCost)}  |  Retail Value: ${this.formatGHS(totalRetail)}  |  Potential Profit: ${this.formatGHS(totalRetail - totalCost)}`, 14, 53);
+
+            const byCategory = {};
+            products.forEach(p => {
+                const cat = p.category || 'Uncategorised';
+                if (!byCategory[cat]) byCategory[cat] = { count: 0, units: 0, costVal: 0, retailVal: 0 };
+                byCategory[cat].count++;
+                byCategory[cat].units += parseInt(p.quantity) || 0;
+                byCategory[cat].costVal += (parseFloat(p.cost) || 0) * (parseInt(p.quantity) || 0);
+                byCategory[cat].retailVal += (parseFloat(p.price) || 0) * (parseInt(p.quantity) || 0);
+            });
+
+            const catRows = Object.entries(byCategory).sort((a, b) => b[1].retailVal - a[1].retailVal).map(([cat, d]) => [
+                cat, d.count.toString(), d.units.toString(), this.formatGHS(d.costVal), this.formatGHS(d.retailVal), this.formatGHS(d.retailVal - d.costVal)
+            ]);
+
+            doc.autoTable({
+                startY: 60,
+                head: [['Category', 'Products', 'Total Units', 'Cost Value (GHS)', 'Retail Value (GHS)', 'Potential Profit (GHS)']],
+                body: catRows,
+                styles: { fontSize: 9 },
+                headStyles: { fillColor: [40, 167, 69] },
+            });
+
+            const detailY = doc.lastAutoTable.finalY + 10;
+            const detailRows = products.map(p => {
+                const qty = parseInt(p.quantity) || 0;
+                const cost = parseFloat(p.cost) || 0;
+                const price = parseFloat(p.price) || 0;
+                const minStock = parseInt(p.minStock) || 10;
+                let status = 'OK';
+                if (qty === 0) status = 'OUT';
+                else if (qty <= minStock) status = 'LOW';
+
+                return [p.name, p.category || 'N/A', qty.toString(), this.formatGHS(cost), this.formatGHS(price), this.formatGHS(cost * qty), this.formatGHS(price * qty), status];
+            });
+
+            doc.autoTable({
+                startY: detailY,
+                head: [['Product', 'Category', 'Qty', 'Cost', 'Price', 'Cost Value', 'Retail Value', 'Status']],
+                body: detailRows,
+                styles: { fontSize: 7 },
+                headStyles: { fillColor: [40, 167, 69] },
+                didParseCell: (data) => {
+                    if (data.column.index === 7) {
+                        const val = data.cell.raw;
+                        if (val === 'OUT') data.cell.styles.textColor = [220, 53, 69];
+                        else if (val === 'LOW') data.cell.styles.textColor = [255, 193, 7];
+                    }
+                }
+            });
+
+            this.addFooter(doc);
+            doc.save(`stock-valuation-${new Date().toISOString().split('T')[0]}.pdf`);
+            Utils.showToast('Stock valuation report downloaded', 'success');
+        } catch (error) {
+            console.error('Error generating stock valuation PDF:', error);
+            Utils.showToast('Failed to generate PDF: ' + error.message, 'error');
+        }
+    }
+
     showExportModal() {
         document.getElementById('pdf-export-modal')?.remove();
 
@@ -795,7 +1337,7 @@ class PDFExportService {
         modal.className = 'modal';
         modal.style.display = 'block';
         modal.innerHTML = `
-            <div class="modal-content" style="max-width: 500px;">
+            <div class="modal-content" style="max-width: 520px;">
                 <span class="close" onclick="document.getElementById('pdf-export-modal').remove()">&times;</span>
                 <h3><i class="fas fa-file-pdf"></i> Export Reports to PDF</h3>
                 <p style="font-size: 0.9rem; color: #666; margin-bottom: 1rem;">All amounts in Ghana Cedi (GHS)</p>
@@ -808,18 +1350,33 @@ class PDFExportService {
                     </div>
                 </div>
                 
-                <div class="export-options" style="display: grid; gap: 0.5rem;">
+                <div class="export-options" style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem;">
                     <button onclick="pdfExport.handleExport('sales')" class="export-btn">
-                        <i class="fas fa-chart-line"></i> Sales Report
+                        <i class="fas fa-chart-line"></i> Sales
                     </button>
                     <button onclick="pdfExport.handleExport('inventory')" class="export-btn">
-                        <i class="fas fa-boxes"></i> Inventory Report
+                        <i class="fas fa-boxes"></i> Inventory
                     </button>
                     <button onclick="pdfExport.handleExport('financial')" class="export-btn">
                         <i class="fas fa-balance-scale"></i> Financial Statement
                     </button>
                     <button onclick="pdfExport.handleExport('pnl')" class="export-btn">
-                        <i class="fas fa-chart-bar"></i> Profit & Loss Report
+                        <i class="fas fa-chart-bar"></i> Profit & Loss
+                    </button>
+                    <button onclick="pdfExport.handleExport('expenses')" class="export-btn">
+                        <i class="fas fa-credit-card"></i> Expenses
+                    </button>
+                    <button onclick="pdfExport.handleExport('cashflow')" class="export-btn">
+                        <i class="fas fa-money-bill-wave"></i> Cash Flow
+                    </button>
+                    <button onclick="pdfExport.handleExport('tax')" class="export-btn">
+                        <i class="fas fa-percentage"></i> Tax / VAT
+                    </button>
+                    <button onclick="pdfExport.handleExport('ar-aging')" class="export-btn">
+                        <i class="fas fa-user-clock"></i> AR Aging
+                    </button>
+                    <button onclick="pdfExport.handleExport('stock-valuation')" class="export-btn">
+                        <i class="fas fa-warehouse"></i> Stock Valuation
                     </button>
                 </div>
             </div>
@@ -832,9 +1389,6 @@ class PDFExportService {
         document.body.appendChild(modal);
     }
 
-    /**
-     * Handle export button click
-     */
     handleExport(type) {
         const dateRange = {
             start: document.getElementById('export-start-date')?.value,
@@ -842,18 +1396,15 @@ class PDFExportService {
         };
 
         switch (type) {
-            case 'sales':
-                this.generateSalesReport(dateRange);
-                break;
-            case 'inventory':
-                this.generateInventoryReport(dateRange);
-                break;
-            case 'financial':
-                this.generateFinancialStatement(dateRange);
-                break;
-            case 'pnl':
-                this.generateProfitLossReport(dateRange);
-                break;
+            case 'sales': this.generateSalesReport(dateRange); break;
+            case 'inventory': this.generateInventoryReport(dateRange); break;
+            case 'financial': this.generateFinancialStatement(dateRange); break;
+            case 'pnl': this.generateProfitLossReport(dateRange); break;
+            case 'expenses': this.generateExpensesReport(dateRange); break;
+            case 'cashflow': this.generateCashFlowReport(dateRange); break;
+            case 'tax': this.generateTaxReport(dateRange); break;
+            case 'ar-aging': this.generateARAgingReport(); break;
+            case 'stock-valuation': this.generateStockValuationReport(); break;
         }
 
         document.getElementById('pdf-export-modal')?.remove();

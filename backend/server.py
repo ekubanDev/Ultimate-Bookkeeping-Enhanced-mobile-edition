@@ -620,6 +620,213 @@ Provide a helpful, concise response focused on actionable business advice."""
         logger.error(f"AI chat error: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Chat failed: {str(e)}")
 
+# ==================== REPORT ENDPOINTS ====================
+
+class ReportRequest(BaseModel):
+    report_type: str  # tax_summary, ar_aging, stock_movement, period_comparison
+    sales_data: List[Dict[str, Any]] = []
+    expenses_data: List[Dict[str, Any]] = []
+    products_data: List[Dict[str, Any]] = []
+    customers_data: List[Dict[str, Any]] = []
+    liabilities_data: List[Dict[str, Any]] = []
+    date_start: Optional[str] = None
+    date_end: Optional[str] = None
+    business_name: str = "Ultimate Bookkeeping"
+    include_ai_summary: bool = False
+
+
+def _compute_tax_summary(sales: list, expenses: list, start: str, end: str) -> dict:
+    """Compute tax collected on sales and deductible taxes on expenses."""
+    filtered_sales = [s for s in sales if (not start or s.get("date", "") >= start) and (not end or s.get("date", "") <= end)]
+    filtered_expenses = [e for e in expenses if (not start or e.get("date", "") >= start) and (not end or e.get("date", "") <= end)]
+
+    tax_collected = 0.0
+    taxable_sales_total = 0.0
+    exempt_sales_total = 0.0
+    tax_by_rate = defaultdict(lambda: {"sales_count": 0, "taxable_amount": 0.0, "tax_amount": 0.0})
+
+    for s in filtered_sales:
+        tax_rate = float(s.get("tax", 0) or 0)
+        qty = float(s.get("quantity", 1) or 1)
+        price = float(s.get("price", 0) or 0)
+        discount = float(s.get("discount", 0) or 0)
+        subtotal = qty * price * (1 - discount / 100)
+        tax_amt = subtotal * (tax_rate / 100)
+
+        if tax_rate > 0:
+            taxable_sales_total += subtotal
+            tax_collected += tax_amt
+            bucket = f"{tax_rate}%"
+            tax_by_rate[bucket]["sales_count"] += 1
+            tax_by_rate[bucket]["taxable_amount"] += subtotal
+            tax_by_rate[bucket]["tax_amount"] += tax_amt
+        else:
+            exempt_sales_total += subtotal
+
+    input_tax = 0.0
+    for e in filtered_expenses:
+        amt = float(e.get("amount", 0) or 0)
+        e_tax = float(e.get("tax", 0) or 0)
+        if e_tax > 0:
+            input_tax += amt * (e_tax / 100)
+
+    return {
+        "period": {"start": start or "all", "end": end or "all"},
+        "total_sales_revenue": round(taxable_sales_total + exempt_sales_total, 2),
+        "taxable_sales": round(taxable_sales_total, 2),
+        "exempt_sales": round(exempt_sales_total, 2),
+        "output_tax_collected": round(tax_collected, 2),
+        "input_tax_on_expenses": round(input_tax, 2),
+        "net_tax_payable": round(tax_collected - input_tax, 2),
+        "tax_breakdown": {k: {kk: round(vv, 2) for kk, vv in v.items()} for k, v in tax_by_rate.items()},
+        "total_transactions": len(filtered_sales),
+    }
+
+
+def _compute_ar_aging(customers: list, sales: list) -> dict:
+    """Compute accounts receivable aging by customer."""
+    today = datetime.now(timezone.utc).date()
+    buckets = {"current": [], "days_30": [], "days_60": [], "days_90_plus": []}
+    total_receivable = 0.0
+
+    for c in customers:
+        balance = float(c.get("balance", 0) or 0)
+        if balance <= 0:
+            continue
+        total_receivable += balance
+        last_purchase = c.get("lastPurchase") or c.get("last_purchase", "")
+        if last_purchase:
+            try:
+                lp_date = datetime.fromisoformat(last_purchase.replace("Z", "+00:00")).date() if "T" in last_purchase else datetime.strptime(last_purchase, "%Y-%m-%d").date()
+                age_days = (today - lp_date).days
+            except Exception:
+                age_days = 999
+        else:
+            age_days = 999
+
+        entry = {
+            "customer": c.get("name", c.get("id", "Unknown")),
+            "email": c.get("email", ""),
+            "phone": c.get("phone", ""),
+            "balance": round(balance, 2),
+            "age_days": age_days,
+            "last_purchase": last_purchase or "N/A",
+        }
+
+        if age_days <= 30:
+            buckets["current"].append(entry)
+        elif age_days <= 60:
+            buckets["days_30"].append(entry)
+        elif age_days <= 90:
+            buckets["days_60"].append(entry)
+        else:
+            buckets["days_90_plus"].append(entry)
+
+    for k in buckets:
+        buckets[k].sort(key=lambda x: x["balance"], reverse=True)
+
+    return {
+        "total_receivable": round(total_receivable, 2),
+        "current": {"total": round(sum(e["balance"] for e in buckets["current"]), 2), "count": len(buckets["current"]), "entries": buckets["current"]},
+        "days_30": {"total": round(sum(e["balance"] for e in buckets["days_30"]), 2), "count": len(buckets["days_30"]), "entries": buckets["days_30"]},
+        "days_60": {"total": round(sum(e["balance"] for e in buckets["days_60"]), 2), "count": len(buckets["days_60"]), "entries": buckets["days_60"]},
+        "days_90_plus": {"total": round(sum(e["balance"] for e in buckets["days_90_plus"]), 2), "count": len(buckets["days_90_plus"]), "entries": buckets["days_90_plus"]},
+    }
+
+
+def _compute_period_comparison(sales: list, expenses: list, start: str, end: str) -> dict:
+    """Compare current period to the equivalent previous period."""
+    if not start or not end:
+        return {"error": "Both start and end dates are required for comparison"}
+
+    try:
+        s_date = datetime.strptime(start, "%Y-%m-%d").date()
+        e_date = datetime.strptime(end, "%Y-%m-%d").date()
+    except Exception:
+        return {"error": "Invalid date format. Use YYYY-MM-DD"}
+
+    period_days = (e_date - s_date).days
+    prev_end = s_date - timedelta(days=1)
+    prev_start = prev_end - timedelta(days=period_days)
+
+    def _period_metrics(s_list, e_list, ps, pe):
+        ps_str, pe_str = ps.isoformat(), pe.isoformat()
+        fs = [s for s in s_list if ps_str <= s.get("date", "") <= pe_str]
+        fe = [e for e in e_list if ps_str <= e.get("date", "") <= pe_str]
+        revenue = sum(float(s.get("total", 0) or (float(s.get("quantity", 0) or 0) * float(s.get("price", 0) or 0))) for s in fs)
+        exp_total = sum(float(e.get("amount", 0) or 0) for e in fe)
+        return {
+            "revenue": round(revenue, 2),
+            "expenses": round(exp_total, 2),
+            "profit": round(revenue - exp_total, 2),
+            "transaction_count": len(fs),
+            "avg_transaction": round(revenue / len(fs), 2) if fs else 0,
+        }
+
+    current = _period_metrics(sales, expenses, s_date, e_date)
+    previous = _period_metrics(sales, expenses, prev_start, prev_end)
+
+    def _pct(cur, prev_val):
+        if prev_val == 0:
+            return 100.0 if cur > 0 else 0.0
+        return round((cur - prev_val) / abs(prev_val) * 100, 1)
+
+    return {
+        "current_period": {"start": start, "end": end, **current},
+        "previous_period": {"start": prev_start.isoformat(), "end": prev_end.isoformat(), **previous},
+        "changes": {
+            "revenue_pct": _pct(current["revenue"], previous["revenue"]),
+            "expenses_pct": _pct(current["expenses"], previous["expenses"]),
+            "profit_pct": _pct(current["profit"], previous["profit"]),
+            "transactions_pct": _pct(current["transaction_count"], previous["transaction_count"]),
+        },
+    }
+
+
+@api_router.post("/reports/generate")
+async def generate_report(request: ReportRequest):
+    """Generate computed report data for the frontend to render or export."""
+    try:
+        result = {"report_type": request.report_type, "business_name": request.business_name, "generated_at": datetime.now(timezone.utc).isoformat()}
+
+        if request.report_type == "tax_summary":
+            result["data"] = _compute_tax_summary(request.sales_data, request.expenses_data, request.date_start, request.date_end)
+
+        elif request.report_type == "ar_aging":
+            result["data"] = _compute_ar_aging(request.customers_data, request.sales_data)
+
+        elif request.report_type == "period_comparison":
+            result["data"] = _compute_period_comparison(request.sales_data, request.expenses_data, request.date_start, request.date_end)
+
+        else:
+            raise HTTPException(status_code=400, detail=f"Unknown report type: {request.report_type}")
+
+        if request.include_ai_summary:
+            api_key = os.environ.get("EMERGENT_LLM_KEY")
+            if api_key:
+                try:
+                    summary_prompt = f"""Analyze this {request.report_type.replace('_', ' ')} report for a business in Ghana and provide a brief (3-4 sentences) executive summary with actionable recommendations.
+
+Report data: {json.dumps(result['data'], default=str)[:3000]}
+
+Respond concisely in plain text, no markdown. Use GHS for currency."""
+                    result["ai_summary"] = await call_llm(
+                        api_key=api_key,
+                        system_message="You are a financial analyst for a Ghana-based retail business. Provide concise, actionable insights. Use GHS for currency.",
+                        prompt=summary_prompt,
+                    )
+                except Exception as e:
+                    logger.warning("AI summary for report failed: %s", e)
+
+        return result
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Report generation error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to generate report: {str(e)}")
+
+
 # ==================== EMAIL ENDPOINTS ====================
 
 from email_service import email_service
