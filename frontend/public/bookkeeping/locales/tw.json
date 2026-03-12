@@ -1,0 +1,155 @@
+{
+  "app": {
+    "name": "Firebase Bookkeeping Kɛseɛ",
+    "tagline": "Dwumadie a Ɛyɛ Berɛ Ankasa Internet So"
+  },
+  "nav": {
+    "dashboard": "Dashboard",
+    "analytics": "Nhwehwɛmu",
+    "sales": "Nneɛma a Wɔtɔn",
+    "inventory": "Nneɛma a Ɛwɔ Hɔ",
+    "expenses": "Sika a Wɔde Di Dwuma",
+    "accounting": "Sika Nkontaabu",
+    "forecasting": "Daakye Nhwehwɛmu",
+    "outlets": "Sotɔɔ Ahodoɔ",
+    "consignments": "Nneɛma a Wɔde Kɔ",
+    "settlements": "Akontaabu Ahorow",
+    "users": "Wɔn a Wɔde Di Dwuma",
+    "customers": "Adetɔfoɔ",
+    "loans": "Bosea ne Bo",
+    "settings": "Nhyehyɛeɛ"
+  },
+  "auth": {
+    "signin": "Hyɛ Mu",
+    "register": "Twerɛ Din",
+    "logout": "Fi Mu",
+    "email": "Email",
+    "password": "Password",
+    "noAccount": "Wonni account? Twerɛ din",
+    "hasAccount": "Wowɔ account dada? Hyɛ mu"
+  },
+  "dashboard": {
+    "revenue": "Sika a Wɔnya Nyinaa",
+    "expenses": "Sika a Wɔde Di Dwuma Nyinaa",
+    "profit": "Mfasoɔ",
+    "sales": "Nneɛma a Wɔtɔn Nyinaa",
+    "lowStock": "Nneɛma a Ɛreduru Hyeɛ",
+    "recentActivity": "Nneɛma a Esi Nnansa Yi",
+    "quickActions": "Ntɛmntɛm Dwumadie"
+  },
+  "products": {
+    "addProduct": "Fa Adeɛ Foforo Ka Ho",
+    "editProduct": "Sesa Adeɛ",
+    "productName": "Adeɛ Din",
+    "category": "Akyɛdeɛ",
+    "costPrice": "Adeɛ Bo",
+    "sellingPrice": "Atɔn Bo",
+    "quantity": "Dodoɔ",
+    "minStock": "Kakraa Bi a Ɛsɛ Sɛ Ɛwɔ Hɔ",
+    "barcode": "Barcode",
+    "generate": "Yɛ",
+    "save": "Sie",
+    "update": "Sesa",
+    "delete": "Yi Fi",
+    "view": "Hwɛ",
+    "edit": "Sesa"
+  },
+  "sales": {
+    "addSale": "Twerɛ Atɔn",
+    "bulkSale": "Atɔn Kɛseɛ",
+    "date": "Ɛda",
+    "customer": "Ɔtɔfoɔ Din",
+    "product": "Adeɛ",
+    "searchProduct": "Hwehwɛ adeɛ...",
+    "quantity": "Dodoɔ",
+    "unitPrice": "Biako Bo",
+    "discount": "Teɛ (%)",
+    "tax": "Toɔ (%)",
+    "total": "Nyinaa",
+    "save": "Twerɛ",
+    "update": "Sesa"
+  },
+  "expenses": {
+    "addExpense": "Fa Sika a Wɔde Di Dwuma Ka Ho",
+    "date": "Ɛda",
+    "description": "Nkyerɛaseɛ",
+    "category": "Akyɛdeɛ",
+    "amount": "Sika Dodoɔ",
+    "save": "Sie",
+    "categories": {
+      "rent": "Dan Ka",
+      "utilities": "Anyinam Ahoɔden",
+      "salaries": "Akatua",
+      "supplies": "Nneɛma",
+      "marketing": "Dawurubɔ",
+      "other": "Nneɛma Foforɔ"
+    }
+  },
+  "customers": {
+    "addCustomer": "Fa Ɔtɔfoɔ Ka Ho",
+    "editCustomer": "Sesa Ɔtɔfoɔ",
+    "name": "Ɔtɔfoɔ Din",
+    "email": "Email",
+    "phone": "Fon Nɔma",
+    "address": "Ɛfie",
+    "notes": "Nsɛm Bi",
+    "save": "Sie",
+    "update": "Sesa"
+  },
+  "outlets": {
+    "addOutlet": "Fa Sotɔɔ Foforo Ka Ho",
+    "outletName": "Sotɔɔ Din",
+    "location": "Baabi a Ɛwɔ",
+    "manager": "Ɔhwɛfoɔ Din",
+    "phone": "Fon Nɔma",
+    "email": "Email",
+    "commission": "Commission (%)",
+    "save": "Sie"
+  },
+  "reports": {
+    "generate": "Yɛ Amanneɛbɔ",
+    "export": "Yi Fi",
+    "period": "Berɛ",
+    "daily": "Daa",
+    "weekly": "Dapɛn Biara",
+    "monthly": "Bosome Biara",
+    "custom": "Paw Berɛ"
+  },
+  "common": {
+    "search": "Hwehwɛ",
+    "filter": "Paapae",
+    "sort": "Hyehyɛ",
+    "actions": "Nneɛma a Wobɛyɛ",
+    "cancel": "Gyae",
+    "confirm": "Si So Dua",
+    "delete": "Yi Fi",
+    "edit": "Sesa",
+    "view": "Hwɛ",
+    "save": "Sie",
+    "back": "San Kɔ",
+    "next": "Kɔ So",
+    "previous": "San Kɔ Akyiri",
+    "loading": "Ɛreloading...",
+    "noData": "Data biara nni hɔ",
+    "selectOption": "Paw Adeɛ",
+    "allCategories": "Akyɛdeɛ Nyinaa",
+    "dateRange": "Nna Ntam"
+  },
+  "messages": {
+    "success": {
+      "saved": "Wɔasie yie",
+      "updated": "Wɔasesa yie",
+      "deleted": "Wɔayi afi hɔ",
+      "exported": "Wɔayi afi hɔ yie"
+    },
+    "error": {
+      "generic": "Asɛm bi asi",
+      "required": "Eyi ho hia",
+      "invalid": "Ɛnyɛ korɔ",
+      "notFound": "Wɔanhunu"
+    },
+    "confirm": {
+      "delete": "Wopɛ sɛ woyi eyi fi hɔ ampa?"
+    }
+  }
+}

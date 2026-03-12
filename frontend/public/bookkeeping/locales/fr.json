@@ -1,0 +1,155 @@
+{
+  "app": {
+    "name": "Comptabilité Firebase Ultime",
+    "tagline": "Gestion d'Entreprise Basée sur le Cloud en Temps Réel"
+  },
+  "nav": {
+    "dashboard": "Tableau de Bord",
+    "analytics": "Analytique",
+    "sales": "Ventes",
+    "inventory": "Inventaire",
+    "expenses": "Dépenses",
+    "accounting": "Comptabilité",
+    "forecasting": "Prévisions",
+    "outlets": "Points de Vente",
+    "consignments": "Consignations",
+    "settlements": "Règlements",
+    "users": "Utilisateurs",
+    "customers": "Clients",
+    "loans": "Prêts et Tarification",
+    "settings": "Paramètres"
+  },
+  "auth": {
+    "signin": "Se Connecter",
+    "register": "S'inscrire",
+    "logout": "Déconnexion",
+    "email": "Email",
+    "password": "Mot de passe",
+    "noAccount": "Pas de compte? S'inscrire",
+    "hasAccount": "Déjà un compte? Se connecter"
+  },
+  "dashboard": {
+    "revenue": "Revenu Total",
+    "expenses": "Dépenses Totales",
+    "profit": "Bénéfice Net",
+    "sales": "Ventes Totales",
+    "lowStock": "Articles en Rupture",
+    "recentActivity": "Activité Récente",
+    "quickActions": "Actions Rapides"
+  },
+  "products": {
+    "addProduct": "Ajouter un Produit",
+    "editProduct": "Modifier le Produit",
+    "productName": "Nom du Produit",
+    "category": "Catégorie",
+    "costPrice": "Prix de Revient",
+    "sellingPrice": "Prix de Vente",
+    "quantity": "Quantité",
+    "minStock": "Stock Minimum",
+    "barcode": "Code-barres",
+    "generate": "Générer",
+    "save": "Enregistrer",
+    "update": "Mettre à Jour",
+    "delete": "Supprimer",
+    "view": "Voir",
+    "edit": "Modifier"
+  },
+  "sales": {
+    "addSale": "Enregistrer une Vente",
+    "bulkSale": "Achat en Gros",
+    "date": "Date",
+    "customer": "Nom du Client",
+    "product": "Produit",
+    "searchProduct": "Rechercher des produits...",
+    "quantity": "Quantité",
+    "unitPrice": "Prix Unitaire",
+    "discount": "Remise (%)",
+    "tax": "Taxe (%)",
+    "total": "Total",
+    "save": "Enregistrer",
+    "update": "Mettre à Jour"
+  },
+  "expenses": {
+    "addExpense": "Ajouter une Dépense",
+    "date": "Date",
+    "description": "Description",
+    "category": "Catégorie",
+    "amount": "Montant",
+    "save": "Enregistrer",
+    "categories": {
+      "rent": "Loyer",
+      "utilities": "Services Publics",
+      "salaries": "Salaires",
+      "supplies": "Fournitures",
+      "marketing": "Marketing",
+      "other": "Autre"
+    }
+  },
+  "customers": {
+    "addCustomer": "Ajouter un Client",
+    "editCustomer": "Modifier le Client",
+    "name": "Nom du Client",
+    "email": "Email",
+    "phone": "Téléphone",
+    "address": "Adresse",
+    "notes": "Notes",
+    "save": "Enregistrer",
+    "update": "Mettre à Jour"
+  },
+  "outlets": {
+    "addOutlet": "Ajouter un Point de Vente",
+    "outletName": "Nom du Point de Vente",
+    "location": "Emplacement/Adresse",
+    "manager": "Nom du Gestionnaire",
+    "phone": "Téléphone de Contact",
+    "email": "Email du Gestionnaire",
+    "commission": "Taux de Commission (%)",
+    "save": "Enregistrer"
+  },
+  "reports": {
+    "generate": "Générer un Rapport",
+    "export": "Exporter",
+    "period": "Période",
+    "daily": "Quotidien",
+    "weekly": "Hebdomadaire",
+    "monthly": "Mensuel",
+    "custom": "Plage Personnalisée"
+  },
+  "common": {
+    "search": "Rechercher",
+    "filter": "Filtrer",
+    "sort": "Trier",
+    "actions": "Actions",
+    "cancel": "Annuler",
+    "confirm": "Confirmer",
+    "delete": "Supprimer",
+    "edit": "Modifier",
+    "view": "Voir",
+    "save": "Enregistrer",
+    "back": "Retour",
+    "next": "Suivant",
+    "previous": "Précédent",
+    "loading": "Chargement...",
+    "noData": "Aucune donnée disponible",
+    "selectOption": "Sélectionner une option",
+    "allCategories": "Toutes les Catégories",
+    "dateRange": "Plage de Dates"
+  },
+  "messages": {
+    "success": {
+      "saved": "Enregistré avec succès",
+      "updated": "Mis à jour avec succès",
+      "deleted": "Supprimé avec succès",
+      "exported": "Exporté avec succès"
+    },
+    "error": {
+      "generic": "Une erreur s'est produite",
+      "required": "Ce champ est obligatoire",
+      "invalid": "Entrée invalide",
+      "notFound": "Non trouvé"
+    },
+    "confirm": {
+      "delete": "Êtes-vous sûr de vouloir supprimer cet élément?"
+    }
+  }
+}

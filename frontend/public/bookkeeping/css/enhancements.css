@@ -1,0 +1,622 @@
+/**
+ * Enhanced Features CSS
+ * Styles for Priority 1, 2, 3 enhancements
+ */
+
+/* ==================== OUTLET CONTEXT (ROLE-BASED UX) ==================== */
+#outlet-context {
+    padding: 0.25rem 0.5rem;
+    border-radius: 4px;
+    background: rgba(255,255,255,0.2);
+    font-size: 0.85rem;
+}
+.location-badge {
+    padding: 0.2rem 0.5rem;
+    border-radius: 4px;
+    background: rgba(255,255,255,0.25);
+    font-size: 0.85rem;
+}
+@media (max-width: 768px) {
+    #outlet-context { font-size: 0.8rem; max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+}
+
+/* ==================== STOCK ALERTS WIDGET ==================== */
+.stock-alerts-widget {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.alert-item {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.alert-item:hover {
+    transform: translateX(5px);
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+}
+
+.alert-item.critical {
+    background: linear-gradient(135deg, #ffe6e6, #ffcccc);
+    border-left: 4px solid #dc3545;
+}
+
+.alert-item.warning {
+    background: linear-gradient(135deg, #fff8e6, #fff3cc);
+    border-left: 4px solid #ffc107;
+}
+
+.alert-item.info {
+    background: linear-gradient(135deg, #e6f3ff, #cce7ff);
+    border-left: 4px solid #17a2b8;
+}
+
+.alert-item.success {
+    background: linear-gradient(135deg, #e6ffe6, #ccffcc);
+    border-left: 4px solid #28a745;
+}
+
+.alert-item i:first-child {
+    font-size: 1.2rem;
+}
+
+.alert-item.critical i:first-child { color: #dc3545; }
+.alert-item.warning i:first-child { color: #ffc107; }
+.alert-item.info i:first-child { color: #17a2b8; }
+.alert-item.success i:first-child { color: #28a745; }
+
+.alert-item span {
+    flex: 1;
+}
+
+.alert-item i:last-child {
+    opacity: 0.5;
+}
+
+/* Stock Alert Table */
+.stock-alerts-table {
+    width: 100%;
+    margin-top: 1rem;
+}
+
+.stock-critical {
+    color: #dc3545;
+    font-weight: bold;
+}
+
+.stock-warning {
+    color: #ffc107;
+    font-weight: bold;
+}
+
+/* ==================== PROFIT ANALYSIS DASHBOARD ==================== */
+.profit-analysis-dashboard {
+    display: grid;
+    gap: 1.5rem;
+}
+
+.profit-summary-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 1rem;
+}
+
+.profit-card {
+    background: white;
+    padding: 1.5rem;
+    border-radius: 12px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+    text-align: center;
+    position: relative;
+    overflow: hidden;
+}
+
+.profit-card::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 4px;
+}
+
+.profit-card.revenue::before { background: linear-gradient(90deg, #007bff, #00d4ff); }
+.profit-card.gross::before { background: linear-gradient(90deg, #28a745, #7dd87d); }
+.profit-card.expenses::before { background: linear-gradient(90deg, #dc3545, #ff6b6b); }
+.profit-card.net.positive::before { background: linear-gradient(90deg, #28a745, #20c997); }
+.profit-card.net.negative::before { background: linear-gradient(90deg, #dc3545, #ff4757); }
+
+.profit-card i {
+    font-size: 2rem;
+    margin-bottom: 0.5rem;
+    opacity: 0.3;
+}
+
+.profit-card h4 {
+    font-size: 0.9rem;
+    color: #666;
+    margin: 0;
+}
+
+.profit-card .amount {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: #333;
+    margin: 0.5rem 0;
+}
+
+.profit-card .margin {
+    font-size: 0.85rem;
+    color: #666;
+    background: #f0f0f0;
+    padding: 0.25rem 0.5rem;
+    border-radius: 20px;
+}
+
+/* Profitability Distribution */
+.profit-distribution {
+    padding: 1.5rem;
+}
+
+.distribution-bars {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    margin-top: 1rem;
+}
+
+.dist-item {
+    display: grid;
+    grid-template-columns: 120px 1fr 40px;
+    align-items: center;
+    gap: 1rem;
+}
+
+.dist-item .label {
+    font-size: 0.9rem;
+    color: #555;
+}
+
+.dist-item .bar-container {
+    height: 24px;
+    background: #e9ecef;
+    border-radius: 12px;
+    overflow: hidden;
+}
+
+.dist-item .bar {
+    height: 100%;
+    border-radius: 12px;
+    transition: width 0.5s ease;
+}
+
+.dist-item.excellent .bar { background: linear-gradient(90deg, #28a745, #20c997); }
+.dist-item.good .bar { background: linear-gradient(90deg, #17a2b8, #00d4ff); }
+.dist-item.fair .bar { background: linear-gradient(90deg, #ffc107, #ffdd57); }
+.dist-item.poor .bar { background: linear-gradient(90deg, #dc3545, #ff6b6b); }
+
+.dist-item .count {
+    font-weight: 600;
+    color: #333;
+}
+
+/* Margin Cell Colors */
+.margin-cell.excellent { color: #28a745; }
+.margin-cell.good { color: #17a2b8; }
+.margin-cell.fair { color: #ffc107; }
+.margin-cell.poor { color: #dc3545; }
+
+.profit-positive { color: #28a745; font-weight: 600; }
+.profit-negative { color: #dc3545; font-weight: 600; }
+
+/* Inventory Metrics */
+.inventory-metrics {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 1rem;
+    margin-top: 1rem;
+}
+
+.inv-metric {
+    background: #f8f9fa;
+    padding: 1rem;
+    border-radius: 8px;
+    text-align: center;
+}
+
+.inv-metric .label {
+    display: block;
+    font-size: 0.85rem;
+    color: #666;
+}
+
+.inv-metric .value {
+    display: block;
+    font-size: 1.3rem;
+    font-weight: 600;
+    color: #007bff;
+    margin-top: 0.25rem;
+}
+
+/* ==================== CUSTOMER CREDIT WIDGET ==================== */
+.customer-credit-widget {
+    padding: 1.5rem;
+}
+
+.credit-summary {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 1rem;
+    margin: 1rem 0;
+}
+
+.credit-metric {
+    background: #f8f9fa;
+    padding: 1rem;
+    border-radius: 8px;
+    text-align: center;
+}
+
+.credit-metric.receivables {
+    border-left: 4px solid #dc3545;
+}
+
+.credit-metric.credits {
+    border-left: 4px solid #28a745;
+}
+
+.credit-metric.net {
+    border-left: 4px solid #007bff;
+}
+
+.credit-metric .label {
+    display: block;
+    font-size: 0.8rem;
+    color: #666;
+}
+
+.credit-metric .amount {
+    display: block;
+    font-size: 1.2rem;
+    font-weight: 700;
+    color: #333;
+    margin: 0.25rem 0;
+}
+
+.credit-metric .count {
+    font-size: 0.75rem;
+    color: #999;
+}
+
+.top-debtors {
+    margin-top: 1rem;
+}
+
+.top-debtors h4 {
+    font-size: 0.9rem;
+    color: #666;
+    margin-bottom: 0.5rem;
+}
+
+.top-debtors ul {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+.top-debtors li {
+    display: flex;
+    justify-content: space-between;
+    padding: 0.5rem 0;
+    border-bottom: 1px solid #eee;
+}
+
+.top-debtors li:last-child {
+    border-bottom: none;
+}
+
+.top-debtors .name {
+    color: #333;
+}
+
+.top-debtors .balance {
+    color: #dc3545;
+    font-weight: 600;
+}
+
+.btn-link {
+    background: none;
+    border: none;
+    color: #007bff;
+    cursor: pointer;
+    padding: 0.5rem;
+    font-size: 0.9rem;
+}
+
+.btn-link:hover {
+    text-decoration: underline;
+}
+
+/* ==================== RETURNS STYLES ==================== */
+.return-type {
+    display: inline-block;
+    padding: 0.25rem 0.5rem;
+    border-radius: 4px;
+    font-size: 0.8rem;
+    font-weight: 500;
+}
+
+.type-refund {
+    background: #ffe6e6;
+    color: #dc3545;
+}
+
+.type-credit {
+    background: #e6f7ff;
+    color: #17a2b8;
+}
+
+.type-exchange {
+    background: #fff8e6;
+    color: #ffc107;
+}
+
+/* ==================== RECURRING EXPENSES ==================== */
+.status-badge {
+    display: inline-block;
+    padding: 0.25rem 0.75rem;
+    border-radius: 20px;
+    font-size: 0.75rem;
+    font-weight: 500;
+    text-transform: uppercase;
+}
+
+.status-active {
+    background: #d4edda;
+    color: #155724;
+}
+
+.status-paused {
+    background: #fff3cd;
+    color: #856404;
+}
+
+.status-pending {
+    background: #fff3cd;
+    color: #856404;
+}
+
+.status-transit {
+    background: #cce5ff;
+    color: #004085;
+}
+
+.status-received {
+    background: #d4edda;
+    color: #155724;
+}
+
+.status-cancelled {
+    background: #f8d7da;
+    color: #721c24;
+}
+
+/* ==================== FORM VALIDATION ==================== */
+.input-error {
+    border-color: #dc3545 !important;
+    background-color: #fff5f5 !important;
+}
+
+.input-success {
+    border-color: #28a745 !important;
+}
+
+.field-error {
+    display: block;
+    color: #dc3545;
+    font-size: 0.8rem;
+    margin-top: 0.25rem;
+}
+
+.validation-error {
+    background: #f8d7da;
+    color: #721c24;
+    padding: 0.5rem;
+    border-radius: 4px;
+    margin-bottom: 0.5rem;
+    font-size: 0.9rem;
+}
+
+.validation-error i {
+    margin-right: 0.5rem;
+}
+
+/* ==================== BUTTONS ==================== */
+.btn-sm {
+    padding: 0.25rem 0.5rem;
+    font-size: 0.8rem;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    margin-right: 0.25rem;
+}
+
+.btn-primary { background: #007bff; color: white; }
+.btn-success { background: #28a745; color: white; }
+.btn-warning { background: #ffc107; color: #333; }
+.btn-danger { background: #dc3545; color: white; }
+.btn-info { background: #17a2b8; color: white; }
+
+.btn-sm:hover {
+    opacity: 0.85;
+}
+
+/* ==================== EXPORT MODAL ==================== */
+.export-btn {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    width: 100%;
+    padding: 1rem;
+    background: #f8f9fa;
+    border: 1px solid #dee2e6;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.export-btn:hover {
+    background: #007bff;
+    color: white;
+    border-color: #007bff;
+}
+
+.export-btn i {
+    font-size: 1.5rem;
+}
+
+/* ==================== SCANNER BUTTON ==================== */
+.scanner-btn {
+    background: linear-gradient(135deg, #667eea, #764ba2);
+    color: white;
+    border: none;
+    border-radius: 50%;
+    width: 50px;
+    height: 50px;
+    font-size: 1.2rem;
+    cursor: pointer;
+    box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+    transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.scanner-btn:hover {
+    transform: scale(1.1);
+    box-shadow: 0 6px 16px rgba(102, 126, 234, 0.5);
+}
+
+/* ==================== NO DATA MESSAGE ==================== */
+.no-data-message {
+    text-align: center;
+    padding: 3rem;
+    color: #666;
+}
+
+.no-data-message i {
+    margin-bottom: 1rem;
+}
+
+.no-data-message p {
+    margin: 1rem 0;
+}
+
+/* ==================== TABLE RESPONSIVE ==================== */
+.table-responsive {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+}
+
+/* ==================== INFO DISPLAY ==================== */
+.info-display {
+    background: #f8f9fa;
+    padding: 1rem;
+    border-radius: 8px;
+    margin-bottom: 1rem;
+}
+
+.info-display p {
+    margin: 0.25rem 0;
+}
+
+/* ==================== MOBILE IMPROVEMENTS ==================== */
+@media (max-width: 768px) {
+    .profit-summary-grid {
+        grid-template-columns: 1fr 1fr;
+    }
+    
+    .profit-card .amount {
+        font-size: 1.2rem;
+    }
+    
+    .dist-item {
+        grid-template-columns: 1fr;
+        gap: 0.25rem;
+    }
+    
+    .dist-item .label {
+        display: flex;
+        justify-content: space-between;
+    }
+    
+    .dist-item .count {
+        display: none;
+    }
+    
+    .credit-summary {
+        grid-template-columns: 1fr;
+    }
+    
+    .scanner-btn {
+        position: fixed;
+        bottom: 20px;
+        right: 20px;
+        z-index: 1000;
+    }
+}
+
+/* ==================== TOUCH INTERACTIONS ==================== */
+@media (hover: none) {
+    .alert-item:active {
+        transform: scale(0.98);
+    }
+    
+    .profit-card:active {
+        transform: scale(0.98);
+    }
+    
+    button:active {
+        transform: scale(0.95);
+    }
+}
+
+/* ==================== ANIMATIONS ==================== */
+@keyframes slideIn {
+    from {
+        opacity: 0;
+        transform: translateX(100%);
+    }
+    to {
+        opacity: 1;
+        transform: translateX(0);
+    }
+}
+
+@keyframes slideOut {
+    from {
+        opacity: 1;
+        transform: translateX(0);
+    }
+    to {
+        opacity: 0;
+        transform: translateX(100%);
+    }
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+@keyframes pulse {
+    0%, 100% { transform: scale(1); }
+    50% { transform: scale(1.05); }
+}
+
+.animate-pulse {
+    animation: pulse 2s infinite;
+}

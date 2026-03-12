@@ -1,0 +1,236 @@
+/* ==================== THEME SYSTEM ====================
+   Apply by setting data-theme on <html> or <body>.
+   Admin selects theme in Settings; stored in Firebase and applied on load.
+   ==================================================== */
+
+/* ---------- Default / Classic (current app look) ---------- */
+:root,
+[data-theme="classic"] {
+    --bg: #f5f7fa;
+    --card-bg: #ffffff;
+    --text: #333333;
+    --text-muted: #666666;
+    --header-bg: linear-gradient(135deg, #007bff, #0056b3);
+    --nav-bg: #2c3e50;
+    --border: #dee2e6;
+    --hover: #0056b3;
+    --primary: #007bff;
+    --danger: #dc3545;
+    --success: #28a745;
+    --warning: #ffc107;
+    --info: #17a2b8;
+    --radius: 8px;
+    --shadow: 0 4px 6px rgba(0,0,0,0.1);
+    --font-family: 'Roboto', sans-serif;
+}
+
+/* ---------- Modern (clean, high contrast) ---------- */
+[data-theme="modern"] {
+    --bg: #f0f2f5;
+    --card-bg: #ffffff;
+    --text: #1a1a2e;
+    --text-muted: #4a4a68;
+    --header-bg: linear-gradient(135deg, #16213e 0%, #0f3460 100%);
+    --nav-bg: #1a1a2e;
+    --border: #e4e6eb;
+    --hover: #e94560;
+    --primary: #e94560;
+    --danger: #e94560;
+    --success: #00b894;
+    --warning: #fdcb6e;
+    --info: #0984e3;
+    --radius: 12px;
+    --shadow: 0 2px 12px rgba(0,0,0,0.08);
+    --font-family: 'Inter', 'Segoe UI', sans-serif;
+}
+
+/* ---------- Corporate (professional, blue-grey) ---------- */
+[data-theme="corporate"] {
+    --bg: #e8eef3;
+    --card-bg: #ffffff;
+    --text: #2d3748;
+    --text-muted: #718096;
+    --header-bg: linear-gradient(135deg, #2c5282 0%, #2b6cb0 100%);
+    --nav-bg: #2d3748;
+    --border: #cbd5e0;
+    --hover: #2b6cb0;
+    --primary: #2b6cb0;
+    --danger: #c53030;
+    --success: #276749;
+    --warning: #b7791f;
+    --info: #2b6cb0;
+    --radius: 6px;
+    --shadow: 0 1px 3px rgba(0,0,0,0.1);
+    --font-family: 'Open Sans', 'Helvetica Neue', sans-serif;
+}
+
+/* ---------- Minimal (light, soft) ---------- */
+[data-theme="minimal"] {
+    --bg: #fafafa;
+    --card-bg: #ffffff;
+    --text: #374151;
+    --text-muted: #9ca3af;
+    --header-bg: linear-gradient(135deg, #6b7280 0%, #4b5563 100%);
+    --nav-bg: #4b5563;
+    --border: #e5e7eb;
+    --hover: #4b5563;
+    --primary: #4b5563;
+    --danger: #ef4444;
+    --success: #10b981;
+    --warning: #f59e0b;
+    --info: #3b82f6;
+    --radius: 8px;
+    --shadow: 0 1px 2px rgba(0,0,0,0.05);
+    --font-family: 'Source Sans Pro', sans-serif;
+}
+
+/* ---------- Ocean (cool blues & teals) ---------- */
+[data-theme="ocean"] {
+    --bg: #f0f9ff;
+    --card-bg: #ffffff;
+    --text: #0c4a6e;
+    --text-muted: #0369a1;
+    --header-bg: linear-gradient(135deg, #0e7490 0%, #0891b2 50%, #06b6d4 100%);
+    --nav-bg: #0e7490;
+    --border: #a5f3fc;
+    --hover: #0e7490;
+    --primary: #0891b2;
+    --danger: #be123c;
+    --success: #047857;
+    --warning: #b45309;
+    --info: #0284c7;
+    --radius: 10px;
+    --shadow: 0 4px 14px rgba(8, 145, 178, 0.15);
+    --font-family: 'Roboto', sans-serif;
+}
+
+/* ---------- Forest (greens, natural) ---------- */
+[data-theme="forest"] {
+    --bg: #f0fdf4;
+    --card-bg: #ffffff;
+    --text: #14532d;
+    --text-muted: #166534;
+    --header-bg: linear-gradient(135deg, #15803d 0%, #16a34a 50%, #22c55e 100%);
+    --nav-bg: #166534;
+    --border: #bbf7d0;
+    --hover: #15803d;
+    --primary: #16a34a;
+    --danger: #b91c1c;
+    --success: #15803d;
+    --warning: #ca8a04;
+    --info: #0d9488;
+    --radius: 10px;
+    --shadow: 0 4px 14px rgba(22, 163, 74, 0.12);
+    --font-family: 'Roboto', sans-serif;
+}
+
+/* ---------- Sunset (warm amber/coral) ---------- */
+[data-theme="sunset"] {
+    --bg: #fffbeb;
+    --card-bg: #ffffff;
+    --text: #78350f;
+    --text-muted: #b45309;
+    --header-bg: linear-gradient(135deg, #ea580c 0%, #f97316 50%, #fb923c 100%);
+    --nav-bg: #c2410c;
+    --border: #fed7aa;
+    --hover: #c2410c;
+    --primary: #ea580c;
+    --danger: #dc2626;
+    --success: #16a34a;
+    --warning: #d97706;
+    --info: #0284c7;
+    --radius: 10px;
+    --shadow: 0 4px 14px rgba(234, 88, 12, 0.15);
+    --font-family: 'Roboto', sans-serif;
+}
+
+/* ---------- Dark (dark mode) ---------- */
+[data-theme="dark"] {
+    --bg: #1e293b;
+    --card-bg: #334155;
+    --text: #f1f5f9;
+    --text-muted: #94a3b8;
+    --header-bg: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+    --nav-bg: #0f172a;
+    --border: #475569;
+    --hover: #38bdf8;
+    --primary: #38bdf8;
+    --danger: #f87171;
+    --success: #4ade80;
+    --warning: #fbbf24;
+    --info: #38bdf8;
+    --radius: 8px;
+    --shadow: 0 4px 6px rgba(0,0,0,0.3);
+    --font-family: 'Roboto', sans-serif;
+}
+
+/* Apply theme variables to key elements (override styles.css) */
+[data-theme] body {
+    background-color: var(--bg);
+    color: var(--text);
+    font-family: var(--font-family);
+}
+
+[data-theme] header {
+    background: var(--header-bg);
+}
+
+[data-theme] nav,
+[data-theme] .mobile-sidebar nav {
+    background-color: var(--nav-bg) !important;
+}
+
+[data-theme] .card,
+[data-theme] .metric,
+[data-theme] .widget {
+    background: var(--card-bg);
+    box-shadow: var(--shadow);
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+}
+
+[data-theme] .btn:not([style*="background"]),
+[data-theme] button:not([style*="background"]):not(.close-btn):not(.hamburger-btn) {
+    background-color: var(--primary);
+}
+
+[data-theme] .btn:hover,
+[data-theme] button:hover:not(.close-btn):not(.hamburger-btn) {
+    filter: brightness(1.1);
+}
+
+[data-theme] .spinner {
+    border-top-color: var(--primary);
+}
+
+[data-theme] .toast.success { border-left-color: var(--success); }
+[data-theme] .toast.error { border-left-color: var(--danger); }
+[data-theme] .toast.warning { border-left-color: var(--warning); }
+[data-theme] .toast.info { border-left-color: var(--info); }
+
+[data-theme] table th {
+    background-color: var(--bg);
+    color: var(--text);
+    border-color: var(--border);
+}
+
+[data-theme] .metric h3,
+[data-theme] .card h3 {
+    color: var(--text);
+}
+
+[data-theme] .metric p {
+    color: var(--primary);
+}
+
+[data-theme] input,
+[data-theme] select,
+[data-theme] textarea {
+    border-color: var(--border);
+    background: var(--card-bg);
+    color: var(--text);
+}
+
+[data-theme] .danger {
+    background-color: var(--danger) !important;
+}

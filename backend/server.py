@@ -1,0 +1,440 @@
+from fastapi import FastAPI, APIRouter, HTTPException
+from dotenv import load_dotenv
+from starlette.middleware.cors import CORSMiddleware
+from motor.motor_asyncio import AsyncIOMotorClient
+import os
+import logging
+from pathlib import Path
+from pydantic import BaseModel, Field, ConfigDict
+from typing import List, Optional, Dict, Any
+import uuid
+from datetime import datetime, timezone
+
+import json
+from openai import AsyncOpenAI
+
+try:
+    from emergentintegrations.llm.chat import LlmChat, UserMessage
+    HAS_EMERGENT = True
+except ImportError:
+    HAS_EMERGENT = False
+    LlmChat = None
+    UserMessage = None
+
+
+async def call_llm(api_key: str, system_message: str, prompt: str) -> str:
+    """Call LLM via emergentintegrations if available, otherwise use OpenAI directly."""
+    if HAS_EMERGENT:
+        chat = LlmChat(
+            api_key=api_key,
+            session_id=f"session-{uuid.uuid4()}",
+            system_message=system_message
+        ).with_model("openai", "gpt-5.2")
+        return await chat.send_message(UserMessage(text=prompt))
+
+    client = AsyncOpenAI(api_key=api_key)
+    response = await client.chat.completions.create(
+        model="gpt-4o",
+        messages=[
+            {"role": "system", "content": system_message},
+            {"role": "user", "content": prompt}
+        ],
+        temperature=0.7,
+        max_tokens=1000
+    )
+    return response.choices[0].message.content
+
+ROOT_DIR = Path(__file__).parent
+load_dotenv(ROOT_DIR / '.env')
+
+# MongoDB connection
+mongo_url = os.environ['MONGO_URL']
+client = AsyncIOMotorClient(mongo_url)
+db = client[os.environ['DB_NAME']]
+
+# Create the main app without a prefix
+app = FastAPI(title="Ultimate Bookkeeping API", version="2.0")
+
+# Create a router with the /api prefix
+api_router = APIRouter(prefix="/api")
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+# Define Models
+class StatusCheck(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    client_name: str
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+class StatusCheckCreate(BaseModel):
+    client_name: str
+
+class AIInsightsRequest(BaseModel):
+    sales_data: List[Dict[str, Any]]
+    expenses_data: List[Dict[str, Any]]
+    products_data: List[Dict[str, Any]]
+    period: str = "month"
+    analysis_type: str = "general"
+
+class AIInsightsResponse(BaseModel):
+    insights: str
+    recommendations: List[str]
+    alerts: List[str]
+    forecast: Optional[Dict[str, Any]] = None
+
+class ForecastRequest(BaseModel):
+    historical_sales: List[Dict[str, Any]]
+    forecast_days: int = 30
+
+class StockAlertEmailRequest(BaseModel):
+    products: List[Dict[str, Any]]
+    recipient: str
+    business_name: str = "Ultimate Bookkeeping"
+
+class SendReportRequest(BaseModel):
+    report_type: str  # "daily" or "weekly"
+    data: Dict[str, Any]
+    recipient: str
+    business_name: str = "Ultimate Bookkeeping"
+
+class TestEmailRequest(BaseModel):
+    recipient: str
+
+class EmailSettingsRequest(BaseModel):
+    emailNotifications: bool = False
+    dailyReports: bool = False
+    notificationEmail: str = ""
+
+# API Routes
+@api_router.get("/")
+async def root():
+    return {"message": "Ultimate Bookkeeping API", "version": "2.0"}
+
+@api_router.get("/health")
+async def health_check():
+    return {"status": "healthy", "app": "Ultimate Bookkeeping", "version": "2.0"}
+
+@api_router.post("/status", response_model=StatusCheck)
+async def create_status_check(input: StatusCheckCreate):
+    status_dict = input.model_dump()
+    status_obj = StatusCheck(**status_dict)
+    doc = status_obj.model_dump()
+    doc['timestamp'] = doc['timestamp'].isoformat()
+    _ = await db.status_checks.insert_one(doc)
+    return status_obj
+
+@api_router.get("/status", response_model=List[StatusCheck])
+async def get_status_checks():
+    status_checks = await db.status_checks.find({}, {"_id": 0}).to_list(1000)
+    for check in status_checks:
+        if isinstance(check['timestamp'], str):
+            check['timestamp'] = datetime.fromisoformat(check['timestamp'])
+    return status_checks
+
+@api_router.post("/ai/insights", response_model=AIInsightsResponse)
+async def get_ai_insights(request: AIInsightsRequest):
+    """Generate AI-powered business insights using GPT-5.2"""
+    try:
+        total_sales = sum(s.get('total', s.get('quantity', 0) * s.get('price', 0)) for s in request.sales_data)
+        total_products = len(request.products_data)
+        low_stock_count = sum(1 for p in request.products_data if p.get('quantity', 0) <= p.get('minStock', 10))
+
+        def _is_debt_payment(exp):
+            exp_type = (exp.get('expenseType', '') or '').lower()
+            cat = (exp.get('category', '') or '').lower()
+            return exp_type == 'liability_payment' or cat in ('debt payment', 'loan repayment')
+
+        operating_expenses = [e for e in request.expenses_data if not _is_debt_payment(e)]
+        debt_payments = [e for e in request.expenses_data if _is_debt_payment(e)]
+
+        total_expenses = sum(e.get('amount', 0) for e in operating_expenses)
+        total_debt_payments = sum(e.get('amount', 0) for e in debt_payments)
+
+        product_sales = {}
+        for sale in request.sales_data:
+            product = sale.get('product', 'Unknown')
+            qty = sale.get('quantity', 0)
+            product_sales[product] = product_sales.get(product, 0) + qty
+        top_products = sorted(product_sales.items(), key=lambda x: x[1], reverse=True)[:5]
+
+        expense_categories = {}
+        for exp in operating_expenses:
+            cat = exp.get('category', 'Other')
+            expense_categories[cat] = expense_categories.get(cat, 0) + exp.get('amount', 0)
+
+        net_profit = total_sales - total_expenses
+        margin = ((net_profit) / total_sales * 100) if total_sales > 0 else 0
+
+        api_key = os.environ.get('EMERGENT_LLM_KEY')
+
+        if api_key:
+            prompt = f"""You are a business analytics expert. Analyze this bookkeeping data and provide actionable insights. All monetary values are in Ghana Cedis (GHS). Always use the ₵ symbol for currency, never $.
+
+BUSINESS DATA SUMMARY ({request.period}):
+- Total Revenue: ₵{total_sales:,.2f}
+- Operating Expenses: ₵{total_expenses:,.2f}
+- Net Profit: ₵{net_profit:,.2f}
+- Profit Margin: {margin:.1f}%
+- Debt/Liability Payments (not an expense, reduces liabilities): ₵{total_debt_payments:,.2f}
+- Total Products: {total_products}
+- Low Stock Items: {low_stock_count}
+
+TOP SELLING PRODUCTS:
+{chr(10).join([f"- {p[0]}: {p[1]} units" for p in top_products]) if top_products else "- No sales data"}
+
+EXPENSE BREAKDOWN:
+{chr(10).join([f"- {k}: ₵{v:,.2f}" for k, v in sorted(expense_categories.items(), key=lambda x: x[1], reverse=True)]) if expense_categories else "- No expense data"}
+
+Analysis Type: {request.analysis_type}
+
+Provide:
+1. A brief executive summary (2-3 sentences)
+2. 3-5 specific, actionable recommendations
+3. Any urgent alerts or warnings
+4. Revenue forecast trend (up/down/stable)
+
+Format your response as JSON with keys: summary, recommendations (array), alerts (array), trend"""
+
+            response = await call_llm(
+                api_key=api_key,
+                system_message="You are a professional business analyst specializing in retail and inventory management. Provide concise, data-driven insights. This business operates in Ghana. Always use the Ghana Cedi symbol ₵ (GHS) for all monetary values, never $.",
+                prompt=prompt
+            )
+
+            try:
+                json_start = response.find('{')
+                json_end = response.rfind('}') + 1
+                if json_start >= 0 and json_end > json_start:
+                    parsed = json.loads(response[json_start:json_end])
+                    return AIInsightsResponse(
+                        insights=parsed.get('summary', response),
+                        recommendations=parsed.get('recommendations', []),
+                        alerts=parsed.get('alerts', []),
+                        forecast={"trend": parsed.get('trend', 'stable')}
+                    )
+            except json.JSONDecodeError:
+                pass
+
+            return AIInsightsResponse(
+                insights=response[:500],
+                recommendations=["Review low stock items", "Analyze expense patterns", "Focus on top-selling products"],
+                alerts=["Low stock alert" if low_stock_count > 0 else ""],
+                forecast={"trend": "stable"}
+            )
+
+        # Fallback: rule-based insights when AI key is not set
+        recommendations = []
+        alerts = []
+
+        if low_stock_count > 0:
+            alerts.append(f"{low_stock_count} product(s) are at or below minimum stock levels")
+        if margin < 20:
+            alerts.append(f"Profit margin is low at {margin:.1f}% — consider reviewing pricing or cutting expenses")
+            recommendations.append("Review product pricing to improve margins")
+        if net_profit < 0:
+            alerts.append("Business is operating at a loss this period")
+        if top_products:
+            recommendations.append(f"Focus on top seller '{top_products[0][0]}' — consider increasing stock and promotions")
+        if expense_categories:
+            top_expense = max(expense_categories.items(), key=lambda x: x[1])
+            recommendations.append(f"Largest expense category is '{top_expense[0]}' at ₵{top_expense[1]:,.2f} — look for savings")
+        recommendations.append("Maintain consistent stock levels on high-demand items")
+        recommendations.append("Track daily sales trends to identify seasonal patterns")
+
+        trend = "up" if net_profit > 0 and margin > 15 else "down" if net_profit < 0 else "stable"
+        debt_note = f" Debt payments of ₵{total_debt_payments:,.2f} reduced liabilities (not counted as expense)." if total_debt_payments > 0 else ""
+        summary = f"Revenue of ₵{total_sales:,.2f} with operating expenses of ₵{total_expenses:,.2f} yields a net {'profit' if net_profit >= 0 else 'loss'} of ₵{abs(net_profit):,.2f} ({margin:.1f}% margin).{debt_note} Tracking {total_products} products with {low_stock_count} items needing restock."
+
+        return AIInsightsResponse(
+            insights=summary,
+            recommendations=recommendations[:5],
+            alerts=alerts if alerts else ["No urgent alerts"],
+            forecast={"trend": trend}
+        )
+
+    except Exception as e:
+        logger.error(f"AI insights error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to generate insights: {str(e)}")
+
+@api_router.post("/ai/forecast")
+async def get_sales_forecast(request: ForecastRequest):
+    """Generate sales forecast using AI or rule-based fallback"""
+    try:
+        daily_totals = {}
+        for sale in request.historical_sales:
+            date = sale.get('date', '')[:10]
+            total = sale.get('total', sale.get('quantity', 0) * sale.get('price', 0))
+            daily_totals[date] = daily_totals.get(date, 0) + total
+
+        sorted_sales = sorted(daily_totals.items())
+        recent_avg = sum(v for _, v in sorted_sales[-7:]) / min(7, len(sorted_sales)) if sorted_sales else 0
+
+        api_key = os.environ.get('EMERGENT_LLM_KEY')
+
+        if api_key:
+            prompt = f"""Based on this sales history, forecast the next {request.forecast_days} days. All monetary values are in Ghana Cedis (GHS). Always use the ₵ symbol for currency, never $.
+
+DAILY SALES (last 30 entries):
+{chr(10).join([f"{d}: ₵{v:,.2f}" for d, v in sorted_sales[-30:]])}
+
+7-day average: ₵{recent_avg:,.2f}
+
+Provide a JSON response with:
+1. predicted_daily_average: number
+2. trend: "up", "down", or "stable"
+3. confidence: "high", "medium", or "low"
+4. factors: array of factors affecting the forecast"""
+
+            response = await call_llm(
+                api_key=api_key,
+                system_message="You are a sales forecasting expert. Provide data-driven predictions. This business operates in Ghana. Always use the Ghana Cedi symbol ₵ (GHS) for all monetary values, never $.",
+                prompt=prompt
+            )
+
+            try:
+                json_start = response.find('{')
+                json_end = response.rfind('}') + 1
+                if json_start >= 0 and json_end > json_start:
+                    parsed = json.loads(response[json_start:json_end])
+                    return {
+                        "predicted_daily_average": parsed.get('predicted_daily_average', recent_avg),
+                        "trend": parsed.get('trend', 'stable'),
+                        "confidence": parsed.get('confidence', 'medium'),
+                        "factors": parsed.get('factors', []),
+                        "forecast_period": request.forecast_days
+                    }
+            except Exception:
+                pass
+
+        # Rule-based fallback
+        older_avg = sum(v for _, v in sorted_sales[-14:-7]) / min(7, max(1, len(sorted_sales) - 7)) if len(sorted_sales) > 7 else recent_avg
+        trend = "up" if recent_avg > older_avg * 1.05 else "down" if recent_avg < older_avg * 0.95 else "stable"
+        confidence = "medium" if len(sorted_sales) >= 14 else "low" if len(sorted_sales) >= 3 else "low"
+        factors = []
+        if len(sorted_sales) < 7:
+            factors.append("Limited historical data — forecast accuracy will improve over time")
+        if trend == "up":
+            factors.append("Recent sales show upward momentum")
+        elif trend == "down":
+            factors.append("Recent sales trending downward — monitor closely")
+        else:
+            factors.append("Sales are holding steady")
+
+        return {
+            "predicted_daily_average": round(recent_avg, 2),
+            "trend": trend,
+            "confidence": confidence,
+            "factors": factors,
+            "forecast_period": request.forecast_days
+        }
+
+    except Exception as e:
+        logger.error(f"Forecast error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to generate forecast: {str(e)}")
+
+@api_router.post("/ai/chat")
+async def ai_chat(data: Dict[str, Any]):
+    """General AI chat for business questions"""
+    try:
+        question = data.get('question', '')
+        context = data.get('context', {})
+        api_key = os.environ.get('EMERGENT_LLM_KEY')
+
+        if not api_key:
+            return {"response": "AI chat is not configured. Please set the EMERGENT_LLM_KEY environment variable."}
+
+        prompt = f"""Business Question: {question}
+
+Business Context:
+{chr(10).join([f"- {k}: {v}" for k, v in context.items()]) if context else "No additional context provided."}
+
+Provide a helpful, concise response focused on actionable business advice."""
+
+        response = await call_llm(
+            api_key=api_key,
+            system_message="You are a helpful business advisor specializing in retail, inventory management, and bookkeeping. This business operates in Ghana. Always use the Ghana Cedi symbol ₵ (GHS) for all monetary values, never $.",
+            prompt=prompt
+        )
+        return {"response": response}
+
+    except Exception as e:
+        logger.error(f"AI chat error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Chat failed: {str(e)}")
+
+# ==================== EMAIL ENDPOINTS ====================
+
+from email_service import email_service
+from scheduler import report_scheduler
+
+
+@api_router.post("/email/stock-alert")
+async def email_stock_alert(request: StockAlertEmailRequest):
+    if not email_service.configured:
+        raise HTTPException(status_code=503, detail="Email service not configured (GMAIL_USER / GMAIL_APP_PASSWORD missing)")
+    ok = await email_service.send_stock_alert(request.products, request.recipient, request.business_name)
+    if not ok:
+        raise HTTPException(status_code=500, detail="Failed to send stock alert email")
+    return {"status": "sent", "recipient": request.recipient}
+
+
+@api_router.post("/email/send-report")
+async def email_send_report(request: SendReportRequest):
+    if not email_service.configured:
+        raise HTTPException(status_code=503, detail="Email service not configured")
+    if request.report_type == "daily":
+        ok = await email_service.send_daily_summary(request.data, request.recipient, request.business_name)
+    elif request.report_type == "weekly":
+        ok = await email_service.send_weekly_summary(request.data, request.recipient, request.business_name)
+    else:
+        raise HTTPException(status_code=400, detail=f"Unknown report type: {request.report_type}")
+    if not ok:
+        raise HTTPException(status_code=500, detail="Failed to send report email")
+    return {"status": "sent", "report_type": request.report_type, "recipient": request.recipient}
+
+
+@api_router.post("/email/test")
+async def email_test(request: TestEmailRequest):
+    if not email_service.configured:
+        raise HTTPException(status_code=503, detail="Email service not configured (GMAIL_USER / GMAIL_APP_PASSWORD missing)")
+    ok = await email_service.send_test(request.recipient)
+    if not ok:
+        raise HTTPException(status_code=500, detail="Failed to send test email")
+    return {"status": "sent", "recipient": request.recipient}
+
+
+@api_router.post("/email/settings")
+async def email_update_settings(request: EmailSettingsRequest):
+    report_scheduler.update_schedule(request.model_dump())
+    return {"status": "updated", "emailNotifications": request.emailNotifications, "dailyReports": request.dailyReports}
+
+
+# Include the router in the main app
+app.include_router(api_router)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_credentials=True,
+    allow_origins=os.environ.get('CORS_ORIGINS', '*').split(','),
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+@app.on_event("startup")
+async def startup_services():
+    try:
+        report_scheduler.start()
+        logger.info("Report scheduler started")
+    except Exception as exc:
+        logger.warning("Report scheduler could not start: %s", exc)
+
+
+@app.on_event("shutdown")
+async def shutdown_services():
+    report_scheduler.stop()
+    client.close()

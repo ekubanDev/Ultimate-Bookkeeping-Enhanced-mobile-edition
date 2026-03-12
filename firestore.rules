@@ -1,0 +1,96 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isAuth() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuth() && request.auth.uid == userId;
+    }
+
+    // ── Top-level business collections ──
+    // Authenticated users can read/write shared business data
+
+    match /inventory/{docId} {
+      allow read, write: if isAuth();
+    }
+
+    match /sales/{docId} {
+      allow read, write: if isAuth();
+    }
+
+    match /expenses/{docId} {
+      allow read, write: if isAuth();
+    }
+
+    match /customers/{docId} {
+      allow read, write: if isAuth();
+    }
+
+    match /liabilities/{docId} {
+      allow read, write: if isAuth();
+    }
+
+    match /suppliers/{docId} {
+      allow read, write: if isAuth();
+    }
+
+    match /purchase_orders/{docId} {
+      allow read, write: if isAuth();
+    }
+
+    match /payment_transactions/{docId} {
+      allow read, write: if isAuth();
+    }
+
+    match /recurring_expenses/{docId} {
+      allow read, write: if isAuth();
+    }
+
+    // Catch-all for any other top-level business collections
+    match /{collection}/{docId} {
+      allow read, write: if isAuth()
+        && collection != 'users';
+    }
+
+    // ── Outlets (top-level) and subcollections ──
+
+    match /outlets/{outletId} {
+      allow read, write: if isAuth();
+
+      match /{sub}/{docId} {
+        allow read, write: if isAuth();
+      }
+    }
+
+    // ── User profiles and nested data ──
+    // Owner has full access; other auth users can read
+    // (outlet managers must read their admin's user doc and outlet data)
+
+    match /users/{userId} {
+      allow read: if isAuth();
+      allow write: if isOwner(userId);
+
+      match /managed_users/{docId} {
+        allow read, write: if isOwner(userId);
+      }
+
+      match /outlets/{outletId} {
+        allow read, write: if isAuth();
+
+        match /{sub}/{docId} {
+          allow read, write: if isAuth();
+        }
+      }
+
+      // Other direct subcollections (expenses, customers, liabilities, etc.)
+      match /{subcollection}/{docId} {
+        allow read: if isAuth();
+        allow write: if isOwner(userId);
+      }
+    }
+  }
+}
