@@ -67,18 +67,18 @@
             <p data-i18n="app.tagline">Real-time Cloud-Based Business Management</p>
             
             <!-- Global Search Bar -->
-            <div style="margin-top: 1rem; max-width: 600px; margin-left: auto; margin-right: auto;">
-                <div style="position: relative;">
+            <div class="global-search-wrap">
+                <div class="global-search-field">
                     <input 
                         type="text" 
                         id="global-search" 
                         data-i18n="common.search"
-                        placeholder="🔍 Search anything... (products, sales, customers, expenses)"
-                        style="width: 100%; padding: 0.75rem 3rem 0.75rem 1rem; border: none; border-radius: 25px; font-size: 1rem;"
+                        placeholder="Search products, sales, customers, expenses..."
+                        class="global-search-input"
                     >
-                    <i class="fas fa-search" style="position: absolute; right: 1rem; top: 50%; transform: translateY(-50%); color: #666;"></i>
+                    <i class="fas fa-search global-search-icon"></i>
                 </div>
-                <div id="global-search-results" style="display: none; position: absolute; background: white; width: 600px; max-width: 90%; left: 50%; transform: translateX(-50%); margin-top: 0.5rem; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); max-height: 400px; overflow-y: auto; z-index: 9999;"></div>
+                <div id="global-search-results" class="global-search-results"></div>
             </div>
             
             <div id="connection-status">Connecting...</div>
@@ -88,13 +88,13 @@
                 <span id="user-role-display"></span>
                 
                 <!-- Language Selector -->
-                <select id="language-select" style="margin: 0 1rem; padding: 0.25rem 0.5rem; border-radius: 4px; background: rgba(255,255,255,0.2); color: white; border: 1px solid rgba(255,255,255,0.3);">
+                <select id="language-select" class="header-select">
                     <option value="en">🇬🇧 English</option>
                     <option value="tw">🇬🇭 Twi</option>
                     <option value="fr">🇫🇷 Français</option>
                 </select>
                 
-                <button id="logout-btn" style="display: none; background: #dc3545; padding: 0.5rem 1rem; border: none; color: white; border-radius: 4px; cursor: pointer;" data-i18n="auth.logout">Logout</button>
+                <button id="logout-btn" class="btn-logout" style="display: none;" data-i18n="auth.logout">Logout</button>
             </div>
         </div>
     </header>
@@ -1051,29 +1051,66 @@
         <!-- Navigation -->
         <nav>
             <ul>
+                <li class="nav-group-label">Overview</li>
                 <li data-section="dashboard" class="active"><i class="fas fa-tachometer-alt"></i> <span>Dashboard</span></li>
-                <li id="pos-menu-item" onclick="navigateToPOS()" style="cursor: pointer;"><i class="fas fa-cash-register"></i> <span>POS</span></li>
+                <li id="pos-menu-item" onclick="navigateToPOS()" style="cursor: pointer;"><i class="fas fa-cash-register"></i> <span>Point of Sale</span></li>
                 <li data-section="analytics"><i class="fas fa-chart-bar"></i> <span>Analytics</span></li>
-                <li data-section="sales"><i class="fas fa-dollar-sign"></i> <span>Sales</span></li>
+
+                <li class="nav-group-label">Commerce</li>
+                <li data-section="sales"><i class="fas fa-receipt"></i> <span>Sales</span></li>
                 <li data-section="inventory"><i class="fas fa-box"></i> <span>Inventory</span></li>
+                <li data-section="customers"><i class="fas fa-users"></i> <span>Customers</span></li>
+
+                <li class="nav-group-label">Procurement</li>
                 <li data-section="suppliers"><i class="fas fa-truck-loading"></i> <span>Suppliers</span></li>
                 <li data-section="purchase-orders"><i class="fas fa-file-invoice"></i> <span>Purchase Orders</span></li>
+
+                <li class="nav-group-label">Finance</li>
                 <li data-section="expenses"><i class="fas fa-credit-card"></i> <span>Expenses</span></li>
                 <li data-section="accounting"><i class="fas fa-calculator"></i> <span>Accounting</span></li>
                 <li data-section="liabilities"><i class="fas fa-file-invoice-dollar"></i> <span>Liabilities</span></li>
+                <li data-section="reports"><i class="fas fa-file-alt"></i> <span>Reports</span></li>
+
+                <li class="nav-group-label">Insights</li>
                 <li data-section="forecasting"><i class="fas fa-chart-line"></i> <span>Forecasting</span></li>
+
+                <li class="nav-group-label">Operations</li>
                 <li data-section="outlets"><i class="fas fa-store"></i> <span>Outlets</span></li>
                 <li data-section="consignments"><i class="fas fa-truck"></i> <span>Consignments</span></li>
                 <li data-section="settlements"><i class="fas fa-file-invoice-dollar"></i> <span>Settlements</span></li>
-                <li data-section="user-management"><i class="fas fa-users-cog"></i> <span>Users</span></li>
-                <li data-section="customers"><i class="fas fa-users"></i> <span>Customers</span></li>
-                <li data-section="reports"><i class="fas fa-file-alt"></i> <span>Reports</span></li>
+
+                <li class="nav-group-label">Admin</li>
+                <li data-section="user-management"><i class="fas fa-users-cog"></i> <span>User Management</span></li>
                 <li data-section="loans"><i class="fas fa-hand-holding-usd"></i> <span>Loans & Pricing</span></li>
                 <li data-section="settings"><i class="fas fa-cog"></i> <span>Settings</span></li>
                 <li onclick="window.pdfExport?.showExportModal()" style="cursor:pointer;"><i class="fas fa-file-pdf"></i> <span>Quick Export</span></li>
             </ul>
         </nav>
     </div>
+
+    <!-- Mobile Bottom Navigation -->
+    <nav id="bottom-nav" class="bottom-nav" aria-label="Quick navigation">
+        <button data-section="dashboard" class="bottom-nav-item active" aria-label="Dashboard">
+            <i class="fas fa-tachometer-alt"></i>
+            <span>Home</span>
+        </button>
+        <button data-section="sales" class="bottom-nav-item" aria-label="Sales">
+            <i class="fas fa-receipt"></i>
+            <span>Sales</span>
+        </button>
+        <button onclick="navigateToPOS()" class="bottom-nav-item" aria-label="POS">
+            <i class="fas fa-cash-register"></i>
+            <span>POS</span>
+        </button>
+        <button data-section="inventory" class="bottom-nav-item" aria-label="Inventory">
+            <i class="fas fa-box"></i>
+            <span>Stock</span>
+        </button>
+        <button id="bottom-nav-more" class="bottom-nav-item" aria-label="Menu">
+            <i class="fas fa-bars"></i>
+            <span>More</span>
+        </button>
+    </nav>
 
     <!-- Main Content Container -->
     <div id="sections-container"></div>

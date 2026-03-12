@@ -10,6 +10,69 @@
    - Desktops: 1280px+
 ============================================================================= */
 
+/* ==================== MOBILE BOTTOM NAVIGATION ==================== */
+.bottom-nav {
+    display: none;
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    z-index: 1100;
+    background: var(--nav-bg, #1e2a38);
+    border-top: 1px solid rgba(255,255,255,0.08);
+    padding: 0;
+    padding-bottom: env(safe-area-inset-bottom, 0);
+    box-shadow: 0 -2px 12px rgba(0,0,0,0.15);
+}
+
+.bottom-nav-item {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    padding: 8px 4px 6px;
+    background: none;
+    border: none;
+    color: rgba(255,255,255,0.5);
+    font-size: 0.65rem;
+    font-family: inherit;
+    cursor: pointer;
+    transition: color 0.2s;
+    -webkit-tap-highlight-color: transparent;
+    min-height: 52px;
+}
+.bottom-nav-item i {
+    font-size: 1.15rem;
+    margin: 0;
+}
+.bottom-nav-item.active {
+    color: var(--primary, #007bff);
+}
+.bottom-nav-item:hover {
+    color: rgba(255,255,255,0.8);
+    background: none;
+}
+.bottom-nav-item.active:hover {
+    color: var(--primary, #007bff);
+}
+
+@media (max-width: 767px) {
+    .bottom-nav {
+        display: flex;
+    }
+    #sections-container {
+        padding-bottom: 70px;
+    }
+}
+
+@media (min-width: 768px) {
+    .bottom-nav {
+        display: none !important;
+    }
+}
+
 /* ==================== BASE MOBILE STYLES (0-767px) ==================== */
 @media (max-width: 767px) {
     /* Prevent horizontal overflow */

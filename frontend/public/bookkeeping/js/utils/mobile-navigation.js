@@ -241,29 +241,65 @@ class SwipeGesture {
     }
 }
 
-// ==================== INITIALIZATION ====================
-// Initialize mobile navigation when DOM is ready
-let mobileNavInstance = null;
-let swipeGestureInstance = null;
+// ==================== BOTTOM NAV ====================
+class BottomNavigation {
+    constructor() {
+        this.bar = document.getElementById('bottom-nav');
+        if (!this.bar) return;
 
-function initMobileNavigation() {
-    try {
-        // Create mobile navigation instance
-        mobileNavInstance = new MobileNavigation();
-        
-        // Optional: Enable swipe gestures
-        // Uncomment the line below to enable swipe support
-        // swipeGestureInstance = new SwipeGesture(mobileNavInstance);
-        
-        // Make instance globally available if needed
-        window.mobileNav = mobileNavInstance;
-        
-    } catch (error) {
-        console.error('❌ Failed to initialize mobile navigation:', error);
+        this.items = this.bar.querySelectorAll('.bottom-nav-item[data-section]');
+        this.moreBtn = document.getElementById('bottom-nav-more');
+
+        this.items.forEach(btn => {
+            btn.addEventListener('click', () => {
+                const section = btn.dataset.section;
+                if (window.appController) {
+                    window.appController.navigateToSection(section);
+                }
+                this.setActive(section);
+            });
+        });
+
+        if (this.moreBtn) {
+            this.moreBtn.addEventListener('click', () => {
+                if (window.mobileNav) window.mobileNav.openSidebar();
+            });
+        }
+
+        const observer = new MutationObserver(() => this.syncActive());
+        const navUl = document.querySelector('.mobile-sidebar nav ul');
+        if (navUl) observer.observe(navUl, { attributes: true, subtree: true, attributeFilter: ['class'] });
+    }
+
+    setActive(section) {
+        this.bar.querySelectorAll('.bottom-nav-item').forEach(b => b.classList.remove('active'));
+        const match = this.bar.querySelector(`.bottom-nav-item[data-section="${section}"]`);
+        if (match) match.classList.add('active');
+    }
+
+    syncActive() {
+        const activeLi = document.querySelector('.mobile-sidebar nav ul li.active');
+        if (activeLi) this.setActive(activeLi.dataset.section);
     }
 }
 
-// Auto-initialize
+// ==================== INITIALIZATION ====================
+let mobileNavInstance = null;
+let swipeGestureInstance = null;
+let bottomNavInstance = null;
+
+function initMobileNavigation() {
+    try {
+        mobileNavInstance = new MobileNavigation();
+        swipeGestureInstance = new SwipeGesture(mobileNavInstance);
+        bottomNavInstance = new BottomNavigation();
+
+        window.mobileNav = mobileNavInstance;
+    } catch (error) {
+        console.error('Failed to initialize mobile navigation:', error);
+    }
+}
+
 if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', initMobileNavigation);
 } else {

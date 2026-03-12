@@ -15,26 +15,39 @@ export const Utils = {
      */
     showToast(message, type = 'info') {
         const container = document.getElementById('toast-container');
+        if (!container) return;
+
+        const MAX_TOASTS = 4;
+        while (container.children.length >= MAX_TOASTS) {
+            container.removeChild(container.firstChild);
+        }
+
         const toast = document.createElement('div');
         toast.className = `toast ${type}`;
-        
+
         const icons = {
             success: 'fa-check-circle',
             error: 'fa-exclamation-circle',
             warning: 'fa-exclamation-triangle',
             info: 'fa-info-circle'
         };
-        
-        toast.innerHTML = `
-            <i class="fas ${icons[type]} toast-icon"></i>
-            <div>${message}</div>
-        `;
-        
-        container.appendChild(toast);
-        setTimeout(() => {
+
+        const dismiss = () => {
             toast.style.animation = 'slideOut 0.3s ease-out';
-            setTimeout(() => toast.remove(), 300);
-        }, 3000);
+            setTimeout(() => toast.remove(), 280);
+        };
+
+        toast.innerHTML = `
+            <i class="fas ${icons[type] || icons.info} toast-icon"></i>
+            <div style="flex:1">${message}</div>
+            <button class="toast-dismiss" aria-label="Dismiss">&times;</button>
+            <div class="toast-progress"></div>
+        `;
+        toast.setAttribute('role', 'alert');
+
+        toast.querySelector('.toast-dismiss').addEventListener('click', dismiss);
+        container.appendChild(toast);
+        setTimeout(dismiss, 3500);
     },
 
     showSpinner() {
