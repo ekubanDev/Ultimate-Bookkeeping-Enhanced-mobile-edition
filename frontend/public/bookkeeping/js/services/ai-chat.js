@@ -141,17 +141,47 @@ class AIChatService {
         this.isOpen ? this.close() : this.open();
     }
 
+    isMobileOrNative() {
+        try {
+            if (window.Capacitor?.isNativePlatform?.()) return true;
+        } catch (e) { /* ignore */ }
+        return typeof window.matchMedia === 'function' && window.matchMedia('(max-width: 768px)').matches;
+    }
+
     open() {
         this.isOpen = true;
-        this.elements.window.classList.add('open');
+        const win = this.elements.window;
+        if (this.isMobileOrNative()) {
+            win.classList.add('ai-chat-window--fullscreen');
+            this._aiScrollY = window.scrollY || window.pageYOffset || 0;
+            this._aiBodyOverflow = document.body.style.overflow;
+            this._aiHtmlOverflow = document.documentElement.style.overflow;
+            document.body.style.overflow = 'hidden';
+            document.documentElement.style.overflow = 'hidden';
+        }
+        win.classList.add('open');
         this.elements.fab.classList.add('hidden');
         setTimeout(() => this.elements.input.focus(), 300);
     }
 
     close() {
         this.isOpen = false;
-        this.elements.window.classList.remove('open');
+        const win = this.elements.window;
+        const hadScrollLock = this._aiBodyOverflow !== undefined;
+        win.classList.remove('open');
+        win.classList.remove('ai-chat-window--fullscreen');
         this.elements.fab.classList.remove('hidden');
+        if (hadScrollLock) {
+            document.body.style.overflow = this._aiBodyOverflow || '';
+            document.documentElement.style.overflow = this._aiHtmlOverflow || '';
+            this._aiBodyOverflow = undefined;
+            this._aiHtmlOverflow = undefined;
+            const y = this._aiScrollY ?? 0;
+            requestAnimationFrame(() => {
+                window.scrollTo(0, y);
+                window.dispatchEvent(new Event('resize'));
+            });
+        }
     }
 
     clearConversation() {

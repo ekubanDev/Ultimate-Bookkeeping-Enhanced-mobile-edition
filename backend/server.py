@@ -1,4 +1,4 @@
-from fastapi import FastAPI, APIRouter, HTTPException
+from fastapi import FastAPI, APIRouter, HTTPException, Response
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -50,9 +50,11 @@ ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
 # MongoDB connection
-mongo_url = os.environ['MONGO_URL']
-client = AsyncIOMotorClient(mongo_url)
-db = client[os.environ['DB_NAME']]
+mongo_url = os.environ.get("MONGO_URL")
+db_name = os.environ.get("DB_NAME")
+
+client = AsyncIOMotorClient(mongo_url) if mongo_url else None
+db = client[db_name] if client and db_name else None
 
 # Create the main app without a prefix
 app = FastAPI(title="Ultimate Bookkeeping API", version="2.0")
@@ -127,6 +129,16 @@ async def root():
 @api_router.get("/health")
 async def health_check():
     return {"status": "healthy", "app": "Ultimate Bookkeeping", "version": "2.0"}
+
+
+@api_router.options("/{full_path:path}")
+async def cors_preflight_handler(full_path: str):
+    """
+    Handle CORS preflight requests explicitly so that Cloud Run never returns 404
+    for OPTIONS on /api/... paths (which would cause browsers to block requests).
+    The CORSMiddleware will attach the appropriate CORS headers.
+    """
+    return Response(status_code=204)
 
 @api_router.post("/status", response_model=StatusCheck)
 async def create_status_check(input: StatusCheckCreate):
@@ -897,4 +909,5 @@ async def startup_services():
 @app.on_event("shutdown")
 async def shutdown_services():
     report_scheduler.stop()
-    client.close()
+    if client is not None:
+        client.close()

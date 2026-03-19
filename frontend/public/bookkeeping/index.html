@@ -1146,6 +1146,25 @@
     <!-- Mobile Navigation Script -->
     <script src="js/utils/mobile-navigation.js"></script>
     
+    <!-- Backend configuration for web vs. native (Capacitor) -->
+    <script>
+        (function () {
+            var isNative = typeof window !== 'undefined' &&
+                window.Capacitor &&
+                typeof window.Capacitor.isNativePlatform === 'function' &&
+                window.Capacitor.isNativePlatform() === true;
+
+            if (isNative) {
+                // Point mobile (Capacitor) builds at the Cloud Run backend.
+                // Replace with your actual Cloud Run HTTPS URL.
+                window.BACKEND_URL = window.BACKEND_URL || 'https://bookkeeping-api-572507957762.us-central1.run.app';
+            } else {
+                // Web (Firebase Hosting) keeps BACKEND_URL empty so /api/** rewrites work.
+                window.BACKEND_URL = window.BACKEND_URL || '';
+            }
+        })();
+    </script>
+
     <!-- Application JavaScript (ES6 Module) -->
     <script type="module" src="js/app.js"></script>
 </body>

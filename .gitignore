@@ -6,6 +6,7 @@
 
 # Dependencies
 node_modules/
+frontend/.icon-gen-deps/
 /node_modules
 /.pnp
 .pnp.js

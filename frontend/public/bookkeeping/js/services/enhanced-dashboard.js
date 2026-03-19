@@ -767,8 +767,15 @@ export class EnhancedDashboard {
                 })
             });
 
-            if (!response.ok) throw new Error('Failed to load insights');
-            
+            if (!response.ok) {
+                throw new Error(`Failed to load insights (status ${response.status})`);
+            }
+
+            const contentType = response.headers.get('content-type') || '';
+            if (!contentType.includes('application/json')) {
+                throw new Error('Backend did not return JSON for AI insights');
+            }
+
             const data = await response.json();
             this.aiInsights = data;
             

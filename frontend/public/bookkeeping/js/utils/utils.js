@@ -37,9 +37,14 @@ export const Utils = {
             setTimeout(() => toast.remove(), 280);
         };
 
+        const safeMsg = String(message)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/\n/g, '<br>');
         toast.innerHTML = `
             <i class="fas ${icons[type] || icons.info} toast-icon"></i>
-            <div style="flex:1">${message}</div>
+            <div class="toast-message">${safeMsg}</div>
             <button class="toast-dismiss" aria-label="Dismiss">&times;</button>
             <div class="toast-progress"></div>
         `;

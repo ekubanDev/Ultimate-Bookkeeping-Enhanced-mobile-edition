@@ -2,6 +2,7 @@
   "name": "ultimate-bookkeeping",
   "private": true,
   "scripts": {
+    "icons": "cd frontend && npm run icons",
     "build": "cd frontend && npm run build",
     "dev": "npm run build && node dev-server.js",
     "backend": "cd backend && source venv/bin/activate && uvicorn server:app --reload --host 0.0.0.0 --port 8000",
@@ -17,6 +18,6 @@
   "devDependencies": {
     "express": "^5.1.0",
     "firebase-tools": "^13.0.0",
-    "http-proxy-middleware": "^3.0.8"
+    "http-proxy-middleware": "^3.0.5"
   }
 }
