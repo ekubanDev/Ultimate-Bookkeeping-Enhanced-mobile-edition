@@ -2,9 +2,19 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes, viewport-fit=cover" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
   <title>POS System - Ultimate Bookkeeping</title>
   <meta name="theme-color" content="#2c3e50">
+  <!-- Safari/WebKit: bfcache can resume POS with empty/stale Firestore reads -->
+  <script>
+  (function () {
+    window.addEventListener('pageshow', function (e) {
+      if (e && e.persisted) {
+        try { window.location.reload(); } catch (_) {}
+      }
+    }, false);
+  })();
+  </script>
   <meta name="apple-mobile-web-app-capable" content="yes">
   <link rel="manifest" href="/manifest.json">
   <link rel="icon" type="image/png" sizes="192x192" href="/assets/icons/icon-192x192.png">
@@ -31,6 +41,11 @@
       --hover: #1abc9c;
       --danger: #e74c3c;
       --success: #27ae60;
+    }
+
+    html, body {
+      touch-action: manipulation;
+      -webkit-text-size-adjust: 100%;
     }
 
     body {
@@ -152,8 +167,11 @@
     .main {
       flex: 1;
       padding: 1rem;
-      overflow-y: auto;
+      overflow: hidden;
       background: #ecf0f1;
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
     }
 
     .search-box input,
@@ -172,6 +190,10 @@
       box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
       padding: 1rem;
       margin-bottom: 1rem;
+      flex: 1;
+      min-height: 140px;
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
     }
 
     .cart-item {
@@ -199,11 +221,19 @@
       font-weight: 500;
       text-align: right;
       margin: 1rem 0;
+      flex-shrink: 0;
     }
 
     .action-buttons {
       display: flex;
       gap: 1rem;
+      flex-wrap: wrap;
+      flex-shrink: 0;
+      position: sticky;
+      bottom: 0;
+      background: var(--bg);
+      padding-top: 0.5rem;
+      z-index: 2;
     }
 
     .btn {
@@ -367,15 +397,24 @@
     @media (max-width: 768px) {
       .container {
         flex-direction: column;
+        height: calc(100vh - 70px);
       }
       
       .sidebar {
         width: 100%;
-        height: 50vh;
+        height: 52vh;
+      }
+
+      .main {
+        height: 48vh;
       }
 
       .products {
         grid-template-columns: repeat(3, 1fr);
+      }
+
+      .btn {
+        flex: 1 1 calc(50% - 1rem);
       }
     }
   </style>
@@ -528,12 +567,13 @@
       }
     });
 
-    // Back navigation function
+    // Back navigation: index.html adjacent to pos.html (fixes native /index.html 404 vs /bookkeeping/index.html)
     function navigateBackToMain() {
-      if (window.Capacitor && window.Capacitor.isNativePlatform()) {
-        window.location.href = window.location.origin + '/index.html';
+      var target = new URL('index.html', window.location.href).href;
+      if (window.Capacitor && typeof window.Capacitor.isNativePlatform === 'function' && window.Capacitor.isNativePlatform()) {
+        window.location.href = (window.Capacitor.convertFileSrc && window.Capacitor.convertFileSrc(target)) || target;
       } else {
-        window.location.href = 'index.html';
+        window.location.href = target;
       }
     }
     

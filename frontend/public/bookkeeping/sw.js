@@ -1,4 +1,4 @@
-const CACHE_VERSION = 'ubk-v5';
+const CACHE_VERSION = 'ubk-v12';
 const STATIC_CACHE = `static-${CACHE_VERSION}`;
 const DYNAMIC_CACHE = `dynamic-${CACHE_VERSION}`;
 const CDN_CACHE = `cdn-${CACHE_VERSION}`;
@@ -14,6 +14,7 @@ const STATIC_ASSETS = [
   '/bookkeeping/css/enhancements.css',
   '/bookkeeping/css/enhanced-dashboard.css',
   '/bookkeeping/css/ai-chat.css',
+  '/bookkeeping/css/pos-embedded.css',
   '/bookkeeping/css/pos.css',
   '/bookkeeping/js/app.js',
   '/bookkeeping/js/pos-app.js',
@@ -21,6 +22,7 @@ const STATIC_ASSETS = [
   '/bookkeeping/js/config/email-templates.js',
   '/bookkeeping/js/utils/state.js',
   '/bookkeeping/js/utils/utils.js',
+  '/bookkeeping/js/utils/native-pdf-save.js',
   '/bookkeeping/js/utils/mobile-dialogs.js',
   '/bookkeeping/js/utils/mobile-navigation.js',
   '/bookkeeping/js/utils/financial-reports-modal.js',
@@ -116,6 +118,12 @@ self.addEventListener('fetch', (event) => {
 
   // API requests: network-first
   if (API_PATTERNS.some((p) => url.href.includes(p))) {
+    event.respondWith(networkFirst(request, DYNAMIC_CACHE));
+    return;
+  }
+
+  // Full page navigations: network-first (Safari/WebKit + SW cache-first otherwise serves stale HTML/JS)
+  if (request.mode === 'navigate' || request.destination === 'document') {
     event.respondWith(networkFirst(request, DYNAMIC_CACHE));
     return;
   }

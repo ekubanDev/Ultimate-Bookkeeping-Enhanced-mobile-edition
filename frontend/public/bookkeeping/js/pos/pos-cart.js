@@ -84,14 +84,18 @@ export const POSCart = {
     renderCart() {
         const container = document.getElementById('cart');
         const totalEl = document.querySelector('.total');
+        const checkoutBtn = document.getElementById('checkout');
         
         if (!container) return;
 
         if (this.cart.length === 0) {
             container.innerHTML = '<p>Your cart is empty.</p>';
             totalEl.textContent = 'Total: ₵0.00';
+            if (checkoutBtn) checkoutBtn.disabled = true;
             return;
         }
+
+        if (checkoutBtn) checkoutBtn.disabled = false;
 
         let total = 0;
         container.innerHTML = this.cart.map((item, index) => {
@@ -117,25 +121,39 @@ export const POSCart = {
 
     showCheckoutModal() {
         const modal = document.getElementById('checkout-modal');
-        const customerName = document.getElementById('customer-name');
-        const invoicePreview = document.getElementById('invoice-preview');
+        if (!modal) return;
+        const customerName = modal.querySelector('#customer-name');
+        const invoicePreview = modal.querySelector('#invoice-preview');
 
-        // Generate invoice preview
-        invoicePreview.textContent = this.generateInvoice();
+        // Generate invoice preview (defensive so preview never remains stuck at "Loading...")
+        try {
+            if (invoicePreview) invoicePreview.textContent = this.generateInvoice();
+        } catch (e) {
+            console.error('Invoice preview generation failed:', e);
+            if (invoicePreview) {
+                invoicePreview.textContent = 'Unable to render invoice preview. Please continue checkout.';
+            }
+        }
 
         modal.classList.add('active');
-        customerName.value = '';
-        customerName.focus();
+        if (customerName) {
+            customerName.value = '';
+            customerName.focus();
+        }
 
         // Cancel button
-        document.getElementById('cancel-checkout').onclick = () => {
+        const cancelBtn = modal.querySelector('#cancel-checkout');
+        if (cancelBtn) cancelBtn.onclick = () => {
             modal.classList.remove('active');
         };
 
         // Confirm button
-        document.getElementById('confirm-sale').onclick = async () => {
-            await this.confirmSale(customerName.value || 'Walk-in Customer');
-        };
+        const confirmBtn = modal.querySelector('#confirm-sale');
+        if (confirmBtn) {
+            confirmBtn.onclick = async () => {
+                await this.confirmSale((customerName?.value || 'Walk-in Customer'));
+            };
+        }
     },
 
     generateInvoice() {
@@ -145,12 +163,15 @@ export const POSCart = {
         
         let total = 0;
         this.cart.forEach(item => {
-            const subtotal = item.price * item.qty - item.discount;
+            const price = Number(item.price) || 0;
+            const qty = Number(item.qty) || 0;
+            const discount = Number(item.discount) || 0;
+            const subtotal = price * qty - discount;
             total += subtotal;
             lines.push(`${item.name}`);
-            lines.push(`  ${item.qty} × ₵${item.price.toFixed(2)} = ₵${(item.price * item.qty).toFixed(2)}`);
-            if (item.discount > 0) {
-                lines.push(`  Discount: -₵${item.discount.toFixed(2)}`);
+            lines.push(`  ${qty} × ₵${price.toFixed(2)} = ₵${(price * qty).toFixed(2)}`);
+            if (discount > 0) {
+                lines.push(`  Discount: -₵${discount.toFixed(2)}`);
             }
             lines.push('');
         });
@@ -169,14 +190,17 @@ export const POSCart = {
             // Prepare cart data
             let subtotal = 0;
             const items = this.cart.map(item => {
-                const itemSubtotal = item.price * item.qty - item.discount;
+                const price = Number(item.price) || 0;
+                const qty = Number(item.qty) || 0;
+                const discount = Number(item.discount) || 0;
+                const itemSubtotal = price * qty - discount;
                 subtotal += itemSubtotal;
                 return {
                     productId: item.id,
                     name: item.name,
-                    quantity: item.qty,
-                    price: item.price,
-                    discount: item.discount,
+                    quantity: qty,
+                    price: price,
+                    discount: discount,
                     subtotal: itemSubtotal
                 };
             });

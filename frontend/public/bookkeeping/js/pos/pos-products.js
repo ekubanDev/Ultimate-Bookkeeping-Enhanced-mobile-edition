@@ -32,23 +32,28 @@ export const POSProducts = {
         // Apply filter
         if (filter) {
             products = products.filter(p =>
-                p.name.toLowerCase().includes(filter) ||
-                (p.barcode && p.barcode.includes(filter)) ||
-                (p.category && p.category.toLowerCase().includes(filter))
+                (p.name || '').toLowerCase().includes(filter) ||
+                (p.barcode ? String(p.barcode).toLowerCase().includes(filter) : false) ||
+                (p.category ? String(p.category).toLowerCase().includes(filter) : false)
             );
         }
 
         if (products.length === 0) {
-            container.innerHTML = '<p style="text-align: center; color: #888;">No products found</p>';
+            container.innerHTML = '<p style="text-align:center;color:#888;padding:1rem 0;">No products found</p>';
             return;
         }
 
-        container.innerHTML = products.map(p => `
-            <button class="product-btn" onclick="POSProducts.promptForQuantity('${p.id}')">
-                ${p.name}<br>
-                <small>${POSUI.formatCurrency(p.price || 0)} | Stock: ${p.quantity || 0}</small>
-            </button>
-        `).join('');
+        container.innerHTML = products.map((p) => {
+            const qty = Number(p.quantity || 0);
+            const outOfStock = qty <= 0;
+            const onclick = outOfStock ? '' : `onclick="POSProducts.promptForQuantity('${p.id}')"`; // disabled buttons won't fire
+            return `
+                <button class="product-btn" type="button" ${onclick} ${outOfStock ? 'disabled' : ''}>
+                    <div class="pos-product-name">${p.name || 'Untitled'}</div>
+                    <small class="pos-product-meta">${POSUI.formatCurrency(p.price || 0)} | Stock: ${qty}</small>
+                </button>
+            `;
+        }).join('');
     },
 
     promptForQuantity(productId) {

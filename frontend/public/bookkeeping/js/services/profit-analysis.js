@@ -370,7 +370,7 @@ class ProfitAnalysisService {
     /**
      * Export profit analysis to CSV
      */
-    exportToCSV() {
+    async exportToCSV() {
         const analysis = this.getAllProductsAnalysis();
         const headers = [
             'Product Name', 'Category', 'Cost', 'Price', 'Gross Profit', 
@@ -394,7 +394,7 @@ class ProfitAnalysisService {
             p.profitability
         ]);
 
-        Utils.exportToCSV([headers, ...rows], 'profit-analysis.csv');
+        await Utils.exportToCSV([headers, ...rows], 'profit-analysis.csv');
     }
 }
 
