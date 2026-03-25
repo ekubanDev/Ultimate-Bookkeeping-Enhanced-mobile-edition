@@ -6,6 +6,7 @@
 
 import { state } from './state.js';
 import { CONFIG } from '../config/firebase.js';
+import { saveBlobWithNativeFallbacks } from './native-pdf-save.js';
 
 export const Utils = {
     /**
@@ -145,18 +146,26 @@ export const Utils = {
         return d.toISOString().split('T')[0];
     },
 
-    exportToCSV(data, filename) {
-        const csv = data.map(row => row.map(cell => `"${cell}"`).join(',')).join('\n');
+    async exportToCSV(data, filename) {
+        const csv = data
+            .map((row) =>
+                row.map((cell) => `"${String(cell ?? '').replace(/"/g, '""')}"`).join(',')
+            )
+            .join('\n');
         const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
-        const link = document.createElement('a');
-        const url = URL.createObjectURL(blob);
-        link.setAttribute('href', url);
-        link.setAttribute('download', filename);
-        link.style.visibility = 'hidden';
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        this.showToast(`${filename} exported`, 'success');
+        try {
+            const r = await saveBlobWithNativeFallbacks(
+                blob,
+                filename,
+                'CSV export',
+                'Save or share your CSV'
+            );
+            if (r.cancelled) return;
+            if (r.ok) this.showToast(`${filename} exported`, 'success');
+        } catch (e) {
+            console.error('CSV export failed:', e);
+            this.showToast('CSV export failed', 'error');
+        }
     },
 
     generateBarcode() {

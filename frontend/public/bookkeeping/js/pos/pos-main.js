@@ -51,7 +51,7 @@ export const POSMain = {
             } else {
                 // No user - redirect to login
                 console.log('No user, redirecting...');
-                window.location.href = 'index.html';
+                window.location.href = new URL('index.html', window.location.href).href;
             }
         });
     },
