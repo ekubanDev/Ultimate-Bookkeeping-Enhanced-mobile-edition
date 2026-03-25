@@ -127,13 +127,42 @@ class DataLoaderService {
                         console.log('✓ Loaded outlet sales:', state.allSales.length);
                         
                     } else {
-                        // ADMIN: root sales collection (matches app-controller / firebase usage)
-                        console.log('💰 Loading main sales from: sales/');
-                        
-                        const salesRef = collection(db, 'sales');
-                        state.allSales = await fetchCollectionRows(salesRef, 'sales');
-                        
-                        console.log('✓ Loaded main sales:', state.allSales.length);
+                        // ADMIN: load sales based on selected outlet filter (main vs all vs specific outlet)
+                        const uid = state.currentUser.uid;
+                        const selectedFilter = state.selectedOutletFilter || 'main';
+                        const outlets = (state.allOutlets || []).filter(o => o && o.id);
+
+                        const shouldLoadMain = selectedFilter === 'main' || selectedFilter === 'all' || !selectedFilter;
+                        const outletIdsToLoad =
+                            selectedFilter === 'all'
+                                ? outlets.map(o => o.id)
+                                : (selectedFilter && selectedFilter !== 'main') ? [selectedFilter] : [];
+
+                        let mainRows = [];
+                        if (shouldLoadMain) {
+                            console.log('💰 Loading main sales from: sales/');
+                            const mainSalesRef = collection(db, 'sales');
+                            mainRows = await fetchCollectionRows(mainSalesRef, 'sales');
+                            console.log('✓ Loaded main sales:', mainRows.length);
+                        }
+
+                        let outletRows = [];
+                        if (outletIdsToLoad.length > 0) {
+                            console.log(`💰 Loading outlet sales for ${outletIdsToLoad.length} outlet(s) under users/${uid}/outlets/*/outlet_sales`);
+                            for (const outletId of outletIdsToLoad) {
+                                const outletSalesRef = collection(db, 'users', uid, 'outlets', outletId, 'outlet_sales');
+                                const rows = await fetchCollectionRows(outletSalesRef, `outlet_sales:${outletId}`);
+                                outletRows = outletRows.concat(rows.map(r => ({
+                                    ...r,
+                                    outletId: r.outletId || outletId,
+                                    // enhanced-dashboard filters main vs outlets using location/outletId
+                                    location: r.location || outletId
+                                })));
+                            }
+                        }
+
+                        state.allSales = mainRows.concat(outletRows);
+                        console.log(`✓ Loaded sales (${selectedFilter}):`, state.allSales.length);
                     }
                     
                 } catch (error) {

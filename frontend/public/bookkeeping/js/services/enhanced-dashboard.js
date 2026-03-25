@@ -225,6 +225,10 @@ export class EnhancedDashboard {
      */
     buildDashboardHTML(metrics, period) {
         const currencySymbol = '₵';
+        const selectedOutlet = this.state?.selectedOutletFilter
+            || localStorage.getItem('adminOutletFilter')
+            || 'main';
+        const outlets = this.state?.allOutlets || [];
         
         return `
             <div class="dashboard-header">
@@ -237,6 +241,16 @@ export class EnhancedDashboard {
                         <option value="year" ${period === 'year' ? 'selected' : ''}>Last Year</option>
                         <option value="all" ${period === 'all' ? 'selected' : ''}>All Time</option>
                     </select>
+                    ${this.state?.userRole === 'admin' ? `
+                        <select id="outlet-filter-select"
+                                class="enhanced-filter"
+                                aria-label="Select outlet activity to examine"
+                                onchange="window.appController?.handleOutletFilterChange?.()">
+                            <option value="main" ${selectedOutlet === 'main' ? 'selected' : ''}>Main Office</option>
+                            <option value="all" ${selectedOutlet === 'all' ? 'selected' : ''}>All Outlets (Consolidated)</option>
+                            ${outlets.map(o => `<option value="${o.id}" ${selectedOutlet === o.id ? 'selected' : ''}>${this.escapeHtml(o.name)}</option>`).join('')}
+                        </select>
+                    ` : ''}
                     <div class="dashboard-theme-picker">
                         <button class="theme-picker-btn" onclick="window.enhancedDashboard?.toggleThemePicker()">
                             <i class="fas fa-palette"></i> Theme
@@ -478,12 +492,22 @@ export class EnhancedDashboard {
     buildActivityFeed() {
         const activities = [];
         
+        const sales = [...(this.state?.allSales || [])]
+            .sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0))
+            .slice(0, 10);
+
         // Add recent sales
-        (this.state?.allSales || []).slice(-10).forEach(s => {
+        sales.forEach(s => {
+            const loc = s.location || s.outletId || '';
+            const outletName =
+                !loc || loc === 'main'
+                    ? 'Main Shop'
+                    : ((this.state?.allOutlets || []).find(o => o.id === loc)?.name) || loc;
+
             activities.push({
                 type: 'sale',
                 text: `Sale to ${s.customer}`,
-                meta: s.product,
+                meta: `${s.product} • ${outletName}`,
                 amount: s.quantity * s.price,
                 date: s.date,
                 positive: true
@@ -491,7 +515,11 @@ export class EnhancedDashboard {
         });
 
         // Add recent expenses
-        (this.state?.allExpenses || []).slice(-5).forEach(e => {
+        const expenses = [...(this.state?.allExpenses || [])]
+            .sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0))
+            .slice(0, 5);
+
+        expenses.forEach(e => {
             activities.push({
                 type: 'expense',
                 text: e.description,
