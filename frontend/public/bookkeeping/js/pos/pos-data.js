@@ -1,36 +1,8 @@
 // ==================== POS DATA MANAGEMENT ====================
 import { firebaseService } from '../services/firebase-service.js';
-import { collection, db, doc, addDoc, updateDoc } from '../config/firebase.js';
+import { collection, getDocs, db, doc, addDoc, updateDoc } from '../config/firebase.js';
 import { state } from '../utils/state.js';
 import { POSUI } from './pos-ui.js';
-
-/**
- * WebKit/Safari: first Firestore read can be an empty local cache before server data arrives.
- * If default read is empty while online, retry once with server source.
- */
-async function fetchCollectionProducts(colRef, label = 'inventory') {
-    const pull = async (getOpts) => {
-        const snapshot = await colRef.get(getOpts);
-        const rows = [];
-        snapshot.forEach((docSnap) => {
-            rows.push({ id: docSnap.id, ...docSnap.data() });
-        });
-        return { snapshot, rows };
-    };
-    let { snapshot, rows } = await pull();
-    if (rows.length === 0 && typeof navigator !== 'undefined' && navigator.onLine) {
-        try {
-            const second = await pull({ source: 'server' });
-            if (second.rows.length > 0) {
-                console.log(`[POS] ${label}: loaded ${second.rows.length} from server (cache was empty)`);
-                return second.rows;
-            }
-        } catch (e) {
-            console.warn(`[POS] ${label}: server read failed`, e?.message || e);
-        }
-    }
-    return rows;
-}
 
 export const POSData = {
     
@@ -110,16 +82,12 @@ export const POSData = {
         console.log(`📦 Loading from: users/${state.parentAdminId}/outlets/${outletId}/outlet_inventory`);
         
         const inventoryRef = collection(db, 'users', state.parentAdminId, 'outlets', outletId, 'outlet_inventory');
-        let products = await fetchCollectionProducts(inventoryRef, `outlet_inventory:${outletId}`);
-
-        // Fallback: if outlet inventory is empty, try parent's scoped inventory
-        // so Safari users don't get a blank POS due to outlet path issues.
-        if (products.length === 0 && state.parentAdminId) {
-            console.warn('⚠️ Outlet inventory empty, falling back to parent scoped inventory');
-            const parentInventoryRef = collection(db, 'users', state.parentAdminId, 'inventory');
-            const parentRows = await fetchCollectionProducts(parentInventoryRef, 'parent_inventory_fallback');
-            products = products.concat(parentRows);
-        }
+        const snapshot = await getDocs(inventoryRef);
+        
+        const products = [];
+        snapshot.forEach(doc => {
+            products.push({ id: doc.id, ...doc.data() });
+        });
         
         console.log(`✅ Loaded ${products.length} products from outlet inventory`);
         return products;
@@ -128,26 +96,17 @@ export const POSData = {
     // Load admin inventory from main collection
     async loadAdminInventory() {
         try {
-            const uid = state.currentUser?.uid || null;
+            console.log('📦 Loading from: inventory/ (admin main collection)');
+            
+            const inventoryRef = collection(db, 'inventory');
+            const snapshot = await getDocs(inventoryRef);
+            
             const products = [];
-
-            // Primary path in current app architecture: users/{uid}/inventory
-            if (uid) {
-                console.log(`📦 Loading from: users/${uid}/inventory (admin scoped collection)`);
-                const userInventoryRef = collection(db, 'users', uid, 'inventory');
-                const userRows = await fetchCollectionProducts(userInventoryRef, `users/${uid}/inventory`);
-                products.push(...userRows);
-            }
-
-            // Backward compatibility: legacy root collection
-            if (products.length === 0) {
-                console.log('📦 Fallback loading from: inventory/ (legacy root collection)');
-                const inventoryRef = collection(db, 'inventory');
-                const legacyRows = await fetchCollectionProducts(inventoryRef, 'inventory_legacy');
-                products.push(...legacyRows);
-            }
-
-            console.log(`✅ Loaded ${products.length} products for admin POS`);
+            snapshot.forEach(doc => {
+                products.push({ id: doc.id, ...doc.data() });
+            });
+            
+            console.log(`✅ Loaded ${products.length} products from admin inventory`);
             return products;
         } catch (error) {
             console.error('❌ Error loading admin inventory:', error);

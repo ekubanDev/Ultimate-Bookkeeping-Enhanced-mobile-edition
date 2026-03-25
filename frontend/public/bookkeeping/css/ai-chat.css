@@ -10,48 +10,19 @@
     min-height: 100vh;
     min-height: 100dvh;
     pointer-events: none;
-    z-index: 500040;
+    z-index: 100040;
     overflow: hidden;
     box-sizing: border-box;
 }
 
 #ai-chat-root .ai-chat-fab,
 #ai-chat-root .ai-chat-window {
-    pointer-events: auto !important;
-}
-
-/* Stable in-flow launchers (avoids fixed FAB/webview click quirks). */
-.ai-chat-launcher-btn {
-    background: linear-gradient(135deg, #1d9bf0, #9c27b0);
-    color: #fff;
-    border: none;
-    border-radius: 999px;
-    padding: 0.38rem 0.8rem;
-    font-size: 0.82rem;
-    font-weight: 600;
-    display: inline-flex;
-    align-items: center;
-    gap: 0.4rem;
-    cursor: pointer;
-    white-space: nowrap;
-}
-
-.ai-chat-launcher-btn:hover {
-    opacity: 0.92;
-}
-
-.bottom-nav-item.ai-chat-launcher-bottom {
-    display: inline-flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 0.15rem;
+    pointer-events: auto;
 }
 
 /* Floating Action Button */
 .ai-chat-fab {
     position: fixed;
-    isolation: isolate;
     bottom: 1.5rem;
     right: 1.5rem;
     width: 56px;
@@ -60,28 +31,14 @@
     background: linear-gradient(135deg, #1d9bf0, #9c27b0);
     color: white;
     border: none;
-    cursor: pointer !important;
+    cursor: pointer;
     display: flex;
     align-items: center;
     justify-content: center;
     font-size: 1.35rem;
     box-shadow: 0 4px 20px rgba(29, 155, 240, 0.4);
-    z-index: 500050;
+    z-index: 9998;
     transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-    touch-action: manipulation; /* Ensure taps work on iOS */
-    pointer-events: auto !important;
-    cursor: pointer !important;
-}
-
-.ai-chat-fab[aria-disabled="true"] {
-    cursor: pointer !important;
-    opacity: 1 !important;
-    pointer-events: auto !important;
-}
-
-.ai-chat-fab i,
-.ai-chat-fab .fab-pulse {
-    pointer-events: none; /* Make full circle tap target */
 }
 
 .ai-chat-fab:hover {
@@ -93,13 +50,6 @@
     transform: scale(0);
     opacity: 0;
     pointer-events: none;
-}
-
-/* While POS modal is open, keep FAB out of the way. */
-body.pos-modal-open .ai-chat-fab {
-    opacity: 0 !important;
-    pointer-events: none !important;
-    transform: scale(0.8) !important;
 }
 
 .ai-chat-fab .fab-pulse {
@@ -132,7 +82,7 @@ body.pos-modal-open .ai-chat-fab {
     border-radius: 16px;
     display: flex;
     flex-direction: column;
-    z-index: 500051;
+    z-index: 9999;
     box-shadow: 0 12px 48px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.05);
     overflow: hidden;
     transform: scale(0.5) translateY(20px);
@@ -603,7 +553,6 @@ body.pos-modal-open .ai-chat-fab {
     min-height: 100dvh;
     max-height: 100dvh;
     border-radius: 0;
-    transform: none !important; /* Always disable base scale animation in fullscreen */
     transform-origin: center bottom;
     padding-bottom: env(safe-area-inset-bottom, 0);
     padding-top: env(safe-area-inset-top, 0);

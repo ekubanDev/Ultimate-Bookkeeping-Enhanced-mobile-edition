@@ -12,10 +12,6 @@ class AIChatService {
         this.state = null;
         this.elements = {};
         this.injected = false;
-        this._lastTapTs = 0;
-        this._lastTapType = '';
-        this._fabAttrObserver = null;
-        this.launcherButtons = [];
     }
 
     init(state) {
@@ -34,6 +30,11 @@ class AIChatService {
         const root = document.createElement('div');
         root.id = 'ai-chat-root';
         root.innerHTML = `
+            <button class="ai-chat-fab" id="ai-chat-fab" title="Ask AI">
+                <span class="fab-pulse"></span>
+                <i class="fas fa-robot"></i>
+            </button>
+
             <div class="ai-chat-window" id="ai-chat-window">
                 <div class="ai-chat-header">
                     <div class="ai-chat-header-left">
@@ -88,6 +89,7 @@ class AIChatService {
         document.body.appendChild(root);
 
         this.elements = {
+            fab: document.getElementById('ai-chat-fab'),
             window: document.getElementById('ai-chat-window'),
             messages: document.getElementById('ai-chat-messages'),
             welcome: document.getElementById('ai-chat-welcome'),
@@ -97,85 +99,16 @@ class AIChatService {
             clearBtn: document.getElementById('ai-chat-clear'),
             suggestions: document.getElementById('ai-chat-suggestions'),
         };
-
-        // Defensive: ensure FAB is never treated as disabled (especially in native app webviews).
-        this.ensureLauncherButtons();
-        this.bindLauncherButtons();
-    }
-
-    ensureLauncherButtons() {
-        const addIfMissing = (container, id, label, icon) => {
-            if (!container || document.getElementById(id)) return null;
-            const btn = document.createElement('button');
-            btn.id = id;
-            btn.type = 'button';
-            btn.className = 'ai-chat-launcher-btn';
-            btn.setAttribute('aria-label', 'Open AI assistant');
-            btn.innerHTML = `<i class="${icon}"></i> <span>${label}</span>`;
-            container.appendChild(btn);
-            return btn;
-        };
-
-        // Header launcher (desktop/tablet and webview-safe)
-        const authControls = document.getElementById('auth-controls');
-        addIfMissing(authControls, 'ai-chat-launcher-header', 'AI Assistant', 'fas fa-robot');
-
-        // Mobile bottom nav launcher
-        const bottomNav = document.getElementById('bottom-nav');
-        if (bottomNav && !document.getElementById('ai-chat-launcher-bottom')) {
-            const btn = document.createElement('button');
-            btn.id = 'ai-chat-launcher-bottom';
-            btn.type = 'button';
-            btn.className = 'bottom-nav-item ai-chat-launcher-bottom';
-            btn.setAttribute('aria-label', 'AI Assistant');
-            btn.innerHTML = `<i class="fas fa-robot"></i><span>AI</span>`;
-            bottomNav.appendChild(btn);
-        }
-    }
-
-    bindLauncherButtons() {
-        this.launcherButtons.forEach((btn) => btn?.removeEventListener?.('click', this._launcherHandler));
-        this._launcherHandler = () => this.toggle();
-        this.launcherButtons = [
-            document.getElementById('ai-chat-launcher-header'),
-            document.getElementById('ai-chat-launcher-bottom'),
-        ].filter(Boolean);
-        this.launcherButtons.forEach((btn) => btn.addEventListener('click', this._launcherHandler));
     }
 
     bindEvents() {
-        const { closeBtn, clearBtn, input, sendBtn, suggestions } = this.elements;
+        const { fab, closeBtn, clearBtn, input, sendBtn, suggestions } = this.elements;
 
-        const bindTap = (el, handler) => {
-            if (!el) return;
-            const wrapped = (e) => {
-                const now = Date.now();
-                const t = e?.type || '';
-                // De-dupe synthetic follow-up events (touchend->click, pointerup->click, etc.).
-                if (now - this._lastTapTs < 350) {
-                    if (this._lastTapType === 'touchend' && t === 'click') return;
-                    if (this._lastTapType === 'pointerup' && (t === 'click' || t === 'touchend')) return;
-                    if (this._lastTapType === 'touchend' && t === 'pointerup') return;
-                    if (this._lastTapType === 'click' && (t === 'pointerup' || t === 'touchend')) return;
-                }
+        fab.addEventListener('click', () => this.toggle());
+        closeBtn.addEventListener('click', () => this.close());
+        clearBtn.addEventListener('click', () => this.clearConversation());
 
-                this._lastTapTs = now;
-                this._lastTapType = t;
-                e?.preventDefault?.();
-                e?.stopPropagation?.();
-                handler(e);
-            };
-
-            if (typeof window !== 'undefined' && 'PointerEvent' in window) {
-                el.addEventListener('pointerup', wrapped, { passive: false });
-            }
-            el.addEventListener('touchend', wrapped, { passive: false });
-            el.addEventListener('click', wrapped);
-        };
-
-        bindTap(closeBtn, () => this.close());
-        bindTap(clearBtn, () => this.clearConversation());
-        bindTap(sendBtn, () => this.send());
+        sendBtn.addEventListener('click', () => this.send());
 
         input.addEventListener('keydown', (e) => {
             if (e.key === 'Enter' && !e.shiftKey) {
@@ -189,17 +122,15 @@ class AIChatService {
             sendBtn.disabled = !input.value.trim();
         });
 
-        const handleSuggestion = (e) => {
-            const btn = e?.target?.closest?.('.ai-chat-suggestion');
-            if (!btn) return;
-            const q = btn.dataset.q;
-            input.value = q;
-            sendBtn.disabled = false;
-            this.send();
-        };
-        suggestions.addEventListener('click', handleSuggestion);
-        suggestions.addEventListener('pointerup', handleSuggestion, { passive: true });
-        suggestions.addEventListener('touchend', handleSuggestion, { passive: true });
+        suggestions.addEventListener('click', (e) => {
+            const btn = e.target.closest('.ai-chat-suggestion');
+            if (btn) {
+                const q = btn.dataset.q;
+                input.value = q;
+                sendBtn.disabled = false;
+                this.send();
+            }
+        });
 
         document.addEventListener('keydown', (e) => {
             if (e.key === 'Escape' && this.isOpen) this.close();
@@ -229,6 +160,7 @@ class AIChatService {
             document.documentElement.style.overflow = 'hidden';
         }
         win.classList.add('open');
+        this.elements.fab.classList.add('hidden');
         setTimeout(() => this.elements.input.focus(), 300);
     }
 
@@ -238,6 +170,7 @@ class AIChatService {
         const hadScrollLock = this._aiBodyOverflow !== undefined;
         win.classList.remove('open');
         win.classList.remove('ai-chat-window--fullscreen');
+        this.elements.fab.classList.remove('hidden');
         if (hadScrollLock) {
             document.body.style.overflow = this._aiBodyOverflow || '';
             document.documentElement.style.overflow = this._aiHtmlOverflow || '';

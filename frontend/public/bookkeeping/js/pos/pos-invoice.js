@@ -1,7 +1,6 @@
 // ==================== POS INVOICE/RECEIPT ====================
 import { POSUI } from './pos-ui.js';
 import { state } from '../utils/state.js';
-import { capacitorShare, capacitorWriteUtf8File } from '../utils/native-pdf-save.js';
 
 export const POSInvoice = {
     
@@ -142,7 +141,8 @@ export const POSInvoice = {
         try {
             const text = this.generateTextReceipt(this.currentSaleData);
             
-            await capacitorShare({
+            const { Share } = await import('@capacitor/share');
+            await Share.share({
                 title: 'Sales Receipt',
                 text: text,
                 dialogTitle: 'Share Receipt'
@@ -163,8 +163,16 @@ export const POSInvoice = {
             if (this.isCapacitor()) {
                 // Mobile: Save as text file
                 try {
+                    const { Filesystem, Directory } = await import('@capacitor/filesystem');
+                    
                     const fileName = `receipt-${Date.now()}.txt`;
-                    await capacitorWriteUtf8File(fileName, text);
+                    await Filesystem.writeFile({
+                        path: fileName,
+                        data: text,
+                        directory: Directory.Documents,
+                        encoding: 'utf8'
+                    });
+                    
                     POSUI.showNotification('Receipt saved to Documents folder', 'success');
                 } catch (fsError) {
                     console.error('Filesystem error:', fsError);

@@ -142,23 +142,18 @@ export class FirebaseService {
                 const userData = userDoc.data();
                 
                 state.userRole = userData.role;
-                // Used by outlet-manager POS + dashboard listeners.
-                state.parentAdminId = userData.createdBy || null;
                 console.log('UserDataRole:', state.userRole);
                 return {
                     role: userData.role || 'admin',
-                    assignedOutlet: userData.assignedOutlet || null,
-                    parentAdminId: state.parentAdminId
+                    assignedOutlet: userData.assignedOutlet || null
                 };
             }
             // Default to admin if no user document
-            state.parentAdminId = null;
-            return { role: 'admin', assignedOutlet: null, parentAdminId: null };
+            return { role: 'admin', assignedOutlet: null };
         } catch (error) {
             console.error('Error getting user role:', error);
             // Default to admin on error
-            state.parentAdminId = null;
-            return { role: 'admin', assignedOutlet: null, parentAdminId: null };
+            return { role: 'admin', assignedOutlet: null };
         }
     }
     

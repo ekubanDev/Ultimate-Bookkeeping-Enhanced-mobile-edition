@@ -36,8 +36,6 @@ class AppController {
                 this._sectionRendered = {};
                 this._sectionDirty = {};
                 this._currentSection = null;
-                this._posInitialized = false;
-                this._posInitPromise = null;
                 this.initializeUI();
                 this.setupEventListeners();
                 this.setupAuthObserver();
@@ -62,42 +60,9 @@ class AppController {
 
             _refreshCurrentSectionIfDirty() {
                 const cur = this._currentSection;
-                if (!cur) return;
-                // Most sections are refreshed only when marked dirty.
-                // POS is initialized lazily on first open, so allow it even if not marked dirty yet.
-                if (cur !== 'pos' && !this._sectionDirty[cur]) return;
+                if (!cur || !this._sectionDirty[cur]) return;
                 switch (cur) {
                     case 'dashboard': if (window.enhancedDashboard) { window.enhancedDashboard.state = state; window.enhancedDashboard.render(); } else this.renderDashboard(); break;
-                    case 'pos':
-                        // Lazy-init embedded POS exactly once.
-                        if (!this._posInitPromise) {
-                            this._posInitPromise = Promise.all([
-                                import('../pos/pos-main.js'),
-                                import('../pos/pos-ui.js'),
-                                import('../pos/pos-cart.js'),
-                                import('../pos/pos-products.js'),
-                                import('../pos/pos-checkout.js'),
-                                import('../pos/pos-scanner.js'),
-                                import('../pos/pos-modal.js'),
-                                import('../pos/pos-data.js'),
-                                import('../pos/pos-invoice.js')
-                            ]).then((mods) => {
-                                window.POSMain = mods[0].POSMain;
-                                window.POSUI = mods[1].POSUI;
-                                window.POSCart = mods[2].POSCart;
-                                window.POSProducts = mods[3].POSProducts;
-                                window.POSCheckout = mods[4].POSCheckout;
-                                window.POSScanner = mods[5].POSScanner;
-                                window.POSModal = mods[6].POSModal;
-                                window.POSData = mods[7].POSData;
-                                window.POSInvoice = mods[8].POSInvoice;
-
-                                this._posInitialized = true;
-                                return window.POSMain.init();
-                            });
-                        }
-                        this._posInitPromise?.catch((e) => console.error('Embedded POS init failed:', e));
-                        break;
                     case 'sales': this.renderSales(); break;
                     case 'inventory': this.renderInventoryTable(); break;
                     case 'expenses': this.renderExpenses(); break;
@@ -1297,77 +1262,12 @@ class AppController {
             }
 
             navigateToSection(sectionName) {
-                if (sectionName === 'pos') {
-                    this.openPOSModal();
-                    return;
-                }
                 this.showSection(sectionName);
-            }
-
-            cleanupEmbeddedPOS() {
-                try {
-                    // Stop Quagga camera scanner if it was opened.
-                    window.POSScanner?.closeCamera?.();
-                } catch (e) {
-                    console.warn('POS cleanup: closeCamera failed', e);
-                }
-
-                // Hide scanner overlay (fixed-position) in case it is left active.
-                document.getElementById('scanner-container')?.classList.remove('active');
-
-                // Hide POS modals (fixed-position overlays) to prevent pointer-blocking after leaving POS.
-                ['checkout-modal', 'inventory-modal', 'quantity-modal'].forEach((id) => {
-                    document.getElementById(id)?.classList.remove('active');
-                });
-
-                // Receipt modal is created dynamically by POSInvoice.
-                document.getElementById('receipt-modal')?.classList.remove('active');
-
-                // Hide POS modal overlay (embedded UX).
-                const posModal = document.getElementById('pos-modal');
-                if (posModal) {
-                    posModal.classList.remove('active');
-                    posModal.style.display = 'none';
-                    posModal.setAttribute('aria-hidden', 'true');
-                }
-                document.body.classList.remove('pos-modal-open');
-            }
-
-            openPOSModal() {
-                // Remember where to return.
-                this._posPreviousSection = this._currentSection || 'dashboard';
-
-                const posModal = document.getElementById('pos-modal');
-                if (!posModal) return;
-
-                posModal.classList.add('active');
-                posModal.style.display = 'flex';
-                posModal.setAttribute('aria-hidden', 'false');
-                document.body.classList.add('pos-modal-open');
-
-                // Prevent lazy-render bookkeeping state from overwriting POS.
-                this._currentSection = 'pos';
-
-                // Initialize POS modules if needed.
-                this._refreshCurrentSectionIfDirty();
-            }
-
-            closePOSModal() {
-                const prev = this._posPreviousSection || 'dashboard';
-                this._posPreviousSection = null;
-                // showSection() will trigger cleanupEmbeddedPOS() because _currentSection === 'pos'.
-                this.showSection(prev);
             }
 
             showSection(sectionName) {
                 // Rebuild role-based UI on each navigation in case role/assignment changed
                 this.applyRoleBasedUI();
-
-                // If we are leaving POS, ensure overlays (scanner/modals) are closed.
-                const from = this._currentSection;
-                if (from === 'pos' && sectionName !== 'pos') {
-                    this.cleanupEmbeddedPOS();
-                }
 
                 // Restrict outlet managers from accessing admin-only sections
                 if (state.userRole === 'outlet_manager') {
@@ -1412,10 +1312,6 @@ class AppController {
                             if (window.stockAlerts) window.stockAlerts.showStartupAlerts();
                             this._markRendered(sectionName);
                         }
-                        break;
-                    case 'pos':
-                        // POS is an embedded module; initialize it lazily once when the section is first opened.
-                        if (shouldRender) this._refreshCurrentSectionIfDirty();
                         break;
                     case 'sales':
                         if (shouldRender) { this.renderSales(); this._markRendered(sectionName); }
@@ -1969,45 +1865,24 @@ class AppController {
             }
 
             setupRealtimeListeners() {
-                const isOutletManager = state.userRole === 'outlet_manager' && state.assignedOutlet && state.parentAdminId;
-
-                // Inventory changes
-                const inventoryRef = isOutletManager
-                    ? collection(db, 'users', state.parentAdminId, 'outlets', state.assignedOutlet, 'outlet_inventory')
-                    : firebaseService.getUserCollection('inventory');
-
-                onSnapshot(inventoryRef, () => {
+                onSnapshot(firebaseService.getUserCollection('inventory'), () => {
                     dataLoader.loadProducts().then(() => {
                         this.markSectionsDirty(['inventory', 'dashboard', 'outlets', 'consignments', 'settlements']);
                         this.checkLowStockAndNotify();
                         this._refreshCurrentSectionIfDirty();
-                        if (!isOutletManager) this.markSectionDirty('user-management');
+                        if (state.userRole === 'admin') this.markSectionDirty('user-management');
                     });
                 });
 
-                // Sales changes
-                const salesRef = isOutletManager
-                    ? collection(db, 'users', state.parentAdminId, 'outlets', state.assignedOutlet, 'outlet_sales')
-                    : firebaseService.getUserCollection('sales');
-
-                onSnapshot(salesRef, () => {
+                onSnapshot(firebaseService.getUserCollection('sales'), () => {
                     dataLoader.loadSales().then(() => {
                         this.markSectionsDirty(['sales', 'dashboard']);
                         this._refreshCurrentSectionIfDirty();
                     });
                 });
 
-                // Expenses changes
-                if (isOutletManager) {
-                    const outletExpensesRef = collection(
-                        db,
-                        'users',
-                        state.parentAdminId,
-                        'outlets',
-                        state.assignedOutlet,
-                        'outlet_expenses'
-                    );
-                    onSnapshot(outletExpensesRef, () => {
+                if (state.userRole === 'outlet_manager' && state.assignedOutlet) {
+                    onSnapshot(firebaseService.getOutletSubCollection(state.assignedOutlet, 'outlet_expenses'), () => {
                         dataLoader.loadExpenses().then(() => {
                             this.markSectionsDirty(['expenses', 'dashboard', 'analytics']);
                             this._refreshCurrentSectionIfDirty();
@@ -2534,22 +2409,17 @@ class AppController {
                 const dropdown = document.getElementById('sale-product-dropdown');
                 if (!dropdown) return;
                 
-                const searchQuery = String(query || '').toLowerCase().trim();
+                const searchQuery = query.toLowerCase().trim();
                 
                 const availableProducts = state.allProducts.filter(p => p.quantity > 0);
                 
                 let filtered = availableProducts;
                 if (searchQuery) {
-                    filtered = availableProducts.filter(p => {
-                        const name = String(p.name || '').toLowerCase();
-                        const category = String(p.category || '').toLowerCase();
-                        const barcode = String(p.barcode || '').toLowerCase();
-                        return (
-                            name.includes(searchQuery) ||
-                            category.includes(searchQuery) ||
-                            barcode.includes(searchQuery)
-                        );
-                    });
+                    filtered = availableProducts.filter(p => 
+                        p.name.toLowerCase().includes(searchQuery) ||
+                        p.category.toLowerCase().includes(searchQuery) ||
+                        p.barcode?.includes(searchQuery)
+                    );
                 }
                 
                 if (filtered.length === 0) {
@@ -2697,21 +2567,16 @@ class AppController {
                 const dropdown = document.getElementById(`bulk-product-dropdown-${rowIndex}`);
                 if (!dropdown) return;
                 
-                const searchQuery = String(query || '').toLowerCase().trim();
+                const searchQuery = query.toLowerCase().trim();
                 const availableProducts = state.allProducts.filter(p => p.quantity > 0);
                 
                 let filtered = availableProducts;
                 if (searchQuery) {
-                    filtered = availableProducts.filter(p => {
-                        const name = String(p.name || '').toLowerCase();
-                        const category = String(p.category || '').toLowerCase();
-                        const barcode = String(p.barcode || '').toLowerCase();
-                        return (
-                            name.includes(searchQuery) ||
-                            category.includes(searchQuery) ||
-                            barcode.includes(searchQuery)
-                        );
-                    });
+                    filtered = availableProducts.filter(p => 
+                        p.name.toLowerCase().includes(searchQuery) ||
+                        p.category.toLowerCase().includes(searchQuery) ||
+                        p.barcode?.includes(searchQuery)
+                    );
                 }
                 
                 if (filtered.length === 0) {
@@ -13022,147 +12887,9 @@ class AppController {
                 `;
             }
 
-            static buildPOSEmbeddedSection() {
-                // Embedded POS uses the existing module-based POS (`js/pos/*`).
-                // POS modules rely on specific DOM IDs; keep these stable.
-                return `
-                    <div id="pos-modal" class="pos-modal" role="dialog" aria-modal="true" aria-hidden="true">
-                        <div id="pos-embedded-root">
-                            <div class="pos-header">
-                                <div class="pos-header-left">
-                                    <button
-                                        type="button"
-                                        id="pos-close-btn"
-                                        class="pos-close-btn"
-                                        onclick="window.appController && window.appController.closePOSModal && window.appController.closePOSModal()"
-                                    >
-                                        <i class="fas fa-times"></i> Close
-                                    </button>
-                                    <span class="pos-header-title">
-                                        <i class="fas fa-cash-register"></i> Point of Sale
-                                    </span>
-                                </div>
-                                <div class="pos-header-right">
-                                    <span id="user-email" class="pos-user-email">POS Mode</span>
-                                    <button id="dark-mode-toggle" class="pos-dark-toggle" type="button" aria-label="Toggle POS theme">
-                                        <i class="fas fa-moon"></i> Dark Mode
-                                    </button>
-                                </div>
-                            </div>
-
-                            <div class="pos-container">
-                                <div class="pos-left-panel">
-                                    <div class="quick-products-section">
-                                        <h3><i class="fas fa-boxes"></i> Products</h3>
-                                        <div class="pos-search-container">
-                                            <input type="text" id="product-search" class="pos-search-input" placeholder="Search products..." />
-                                            <input type="text" id="barcode-scan" class="pos-barcode-input" placeholder="Scan Barcode..." />
-                                            <button id="open-scanner-btn" class="btn btn-inventory" type="button">
-                                                <i class="fas fa-qrcode"></i> Scan with Camera
-                                            </button>
-                                        </div>
-                                        <div id="product-list" class="pos-product-list"></div>
-                                    </div>
-                                </div>
-
-                                <div class="pos-right-panel">
-                                    <h2><i class="fas fa-shopping-cart"></i> Shopping Cart</h2>
-                                    <div class="cart" id="cart">
-                                        <p>Your cart is empty.</p>
-                                    </div>
-                                    <div class="total total-display">Total: ₵0.00</div>
-
-                                    <div class="action-buttons">
-                                        <button class="btn btn-clear" id="clear-cart" type="button">
-                                            <i class="fas fa-trash"></i> Clear
-                                        </button>
-                                        <button class="btn btn-inventory" id="view-inventory" type="button">
-                                            <i class="fas fa-list"></i> Inventory
-                                        </button>
-                                        <button class="btn btn-checkout" id="checkout" type="button" disabled>
-                                            <i class="fas fa-dollar-sign"></i> Checkout
-                                        </button>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <!-- Checkout Modal -->
-                            <div id="checkout-modal" class="modal" aria-hidden="true">
-                                <div class="modal-content" style="max-width: 500px; display: flex; flex-direction: column; gap: 0.5rem;">
-                                    <h2><i class="fas fa-receipt"></i> Checkout</h2>
-                                    <label for="customer-name">Customer Name:</label>
-                                    <input type="text" id="customer-name" placeholder="Customer Name" />
-                                    <h3>Invoice Preview</h3>
-                                    <div class="invoice-scroll-container">
-                                        <pre class="invoice" id="invoice-preview">Loading...</pre>
-                                    </div>
-                                    <div style="margin-top: auto; display: flex; gap: 1rem; justify-content: center;">
-                                        <button class="btn btn-clear" id="cancel-checkout" type="button">
-                                            <i class="fas fa-times"></i> Cancel
-                                        </button>
-                                        <button class="btn btn-checkout" id="confirm-sale" type="button">
-                                            <i class="fas fa-check"></i> Confirm Sale
-                                        </button>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <!-- Inventory Modal -->
-                            <div id="inventory-modal" class="modal" aria-hidden="true">
-                                <div class="modal-content" style="max-height: 80vh; overflow-y: auto;">
-                                    <h2><i class="fas fa-warehouse"></i> Inventory</h2>
-                                    <table border="1" cellpadding="8" style="width: 100%; border-collapse: collapse; margin-top: 1rem;">
-                                        <thead>
-                                            <tr style="background: #f1f1f1;">
-                                                <th>Product</th>
-                                                <th>Price</th>
-                                                <th>Stock</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody id="inventory-list"></tbody>
-                                    </table>
-                                    <button class="btn btn-clear" id="close-inventory" type="button" style="margin-top: 1rem;">Close</button>
-                                </div>
-                            </div>
-
-                            <!-- Quantity Input Modal -->
-                            <div id="quantity-modal" class="modal" aria-hidden="true">
-                                <div class="modal-content" style="max-width: 400px;">
-                                    <h3><i class="fas fa-box"></i> Enter Quantity</h3>
-                                    <p id="product-name-display"></p>
-                                    <input type="number" id="quantity-input" min="1" value="1" />
-                                    <label id="discount-checkbox-container" style="display:none; margin: 1rem 0; cursor: pointer;">
-                                        <input type="checkbox" id="apply-discount-checkbox" checked>
-                                        <span id="discount-label-text"></span>
-                                    </label>
-                                    <div style="margin-top: 1.5rem; display: flex; gap: 1rem; justify-content: center;">
-                                        <button id="cancel-quantity" class="btn btn-clear" type="button">
-                                            <i class="fas fa-times"></i> Cancel
-                                        </button>
-                                        <button id="add-quantity" class="btn btn-checkout" type="button">
-                                            <i class="fas fa-plus"></i> Add to Cart
-                                        </button>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <!-- Scanner Overlay -->
-                            <div id="scanner-container" class="scanner-overlay" aria-hidden="true">
-                                <div id="scanner-viewport"></div>
-                                <button id="close-scanner" type="button" class="btn btn-clear" style="margin-top: 1rem;">Close Scanner</button>
-                            </div>
-
-                            <!-- Notification Toast -->
-                            <div id="notification" class="notification">Item added!</div>
-                        </div>
-                    </div>
-                `;
-            }
-
             static buildAllSections() {
                 return `
                     ${this.buildDashboardSection()}
-                    ${this.buildPOSEmbeddedSection()}
                     ${this.buildSalesSection()}
                     ${this.buildInventorySection()}
                     ${this.buildSuppliersSection()}

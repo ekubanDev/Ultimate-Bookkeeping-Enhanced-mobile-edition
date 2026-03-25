@@ -3,13 +3,11 @@ import { state } from '../utils/state.js';
 import { POSUI } from './pos-ui.js';
 import { POSProducts } from './pos-products.js';
 import { POSData } from './pos-data.js';
-import { nativeFeatures } from '../services/native-features.js';
 
 const QUAGGA_SCRIPT = 'https://cdnjs.cloudflare.com/ajax/libs/quagga/0.12.1/quagga.min.js';
 
 export const POSScanner = {
     scanning: false,
-    _detectedHandler: null,
 
     async init() {
         console.log('Initializing barcode scanner (QuaggaJS)...');
@@ -57,22 +55,6 @@ export const POSScanner = {
     async openCamera() {
         console.log('Opening camera scanner (QuaggaJS)...');
 
-        // Native app: prefer Capacitor scanner plugin over browser camera APIs.
-        if (nativeFeatures?.isNative) {
-            try {
-                const code = await nativeFeatures.scanBarcode();
-                if (code) {
-                    this.onBarcodeDetected(code);
-                } else {
-                    this.focusManualInput('Scanner unavailable. Enable camera permission in Settings, then retry.');
-                }
-            } catch (err) {
-                console.error('Native barcode scanner failed:', err);
-                this.focusManualInput('Camera permission denied/unavailable. Check app Settings and use manual barcode input.');
-            }
-            return;
-        }
-
         const container = document.getElementById('scanner-container');
         const viewport = document.getElementById('scanner-viewport');
 
@@ -87,23 +69,6 @@ export const POSScanner = {
         } catch (err) {
             console.error('QuaggaJS load error:', err);
             POSUI.showNotification('Scanner library failed to load', 'error');
-            return;
-        }
-
-        // Preflight on mobile Safari/WebKit: prompt permission before Quagga init.
-        if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
-            this.focusManualInput('Camera unavailable on this device. Use manual barcode input.');
-            return;
-        }
-        try {
-            const stream = await navigator.mediaDevices.getUserMedia({
-                video: { facingMode: { ideal: 'environment' } },
-                audio: false
-            });
-            stream.getTracks().forEach((t) => t.stop());
-        } catch (err) {
-            console.error('Camera preflight denied/unavailable:', err);
-            this.focusManualInput('Camera permission denied/unavailable. Use manual barcode input.');
             return;
         }
 
@@ -131,25 +96,21 @@ export const POSScanner = {
         }, (err) => {
             if (err) {
                 console.error('QuaggaJS init error:', err);
-                this.focusManualInput('Camera access denied/unavailable. Use manual barcode input.');
+                POSUI.showNotification('Camera access denied or unavailable', 'error');
                 this.closeCamera();
                 return;
             }
             Quagga.start();
         });
 
-        if (this._detectedHandler) {
-            try { Quagga.offDetected(this._detectedHandler); } catch (_) { /* no-op */ }
-        }
-        this._detectedHandler = (result) => {
+        Quagga.onDetected((result) => {
             const code = result?.codeResult?.code;
             if (code) {
                 if (navigator.vibrate) navigator.vibrate(100);
                 this.onBarcodeDetected(code);
                 this.closeCamera();
             }
-        };
-        Quagga.onDetected(this._detectedHandler);
+        });
 
         const closeBtn = document.getElementById('close-scanner');
         if (closeBtn) {
@@ -161,9 +122,6 @@ export const POSScanner = {
         console.log('Closing camera scanner...');
         if (window.Quagga && this.scanning) {
             try {
-                if (this._detectedHandler && typeof window.Quagga.offDetected === 'function') {
-                    window.Quagga.offDetected(this._detectedHandler);
-                }
                 window.Quagga.stop();
             } catch (e) {
                 console.error('Error stopping Quagga:', e);
@@ -172,17 +130,6 @@ export const POSScanner = {
         }
         const container = document.getElementById('scanner-container');
         if (container) container.classList.remove('active');
-    },
-
-    focusManualInput(message) {
-        POSUI.showNotification(message, 'error');
-        const barcodeInput = document.getElementById('barcode-scan');
-        if (barcodeInput) {
-            setTimeout(() => {
-                barcodeInput.focus();
-                barcodeInput.select?.();
-            }, 50);
-        }
     },
 
     onBarcodeDetected(barcode) {

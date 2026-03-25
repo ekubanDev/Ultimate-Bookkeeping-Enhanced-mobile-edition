@@ -1,12 +1,6 @@
 // ==================== FINANCIAL REPORTS MODAL ====================
 // Mobile-friendly financial reports viewer + native save/share via Capacitor
 
-import {
-    sharePdfBlobBestEffort,
-    downloadPdfBlobInBrowser,
-    PDF_SHARE_UNAVAILABLE,
-} from './native-pdf-save.js';
-
 export class FinancialReportsModal {
 
     static parseReportBodyHTML(reportHTML) {
@@ -162,35 +156,60 @@ export class FinancialReportsModal {
         }
     }
 
+    static blobToBase64(blob) {
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onloadend = () => {
+                const base64 = reader.result.split(',')[1];
+                resolve(base64);
+            };
+            reader.onerror = reject;
+            reader.readAsDataURL(blob);
+        });
+    }
+
     static async savePdfAndShare(pdfBlob, fileName, reportTitle, successMessage) {
+        const { Filesystem, Directory } = await import('@capacitor/filesystem');
+        const { Share } = await import('@capacitor/share');
+        const base64Data = await this.blobToBase64(pdfBlob);
+
         if (typeof Utils !== 'undefined' && Utils.showToast) {
             Utils.showToast('Generating PDF for sharing…', 'info');
         }
 
-        const hint = successMessage || 'Save to Files, email, or another app';
-        const safeName = String(fileName).replace(/[^a-zA-Z0-9._-]/g, '_');
+        await Filesystem.writeFile({
+            path: fileName,
+            data: base64Data,
+            // Use Documents so iOS can share/view the file reliably.
+            directory: Directory.Documents,
+            recursive: true,
+        });
+
+        const { uri } = await Filesystem.getUri({
+            path: fileName,
+            directory: Directory.Documents,
+        });
 
         try {
-            await sharePdfBlobBestEffort(pdfBlob, safeName, reportTitle, hint);
+            // Best-effort: try opening the saved PDF so "view" works even
+            // when the share sheet doesn't immediately appear.
+            try {
+                window.open(uri, '_blank');
+            } catch (_) {
+                // Ignore if the WebView refuses to open the scheme.
+            }
+
+            await Share.share({
+                title: reportTitle,
+                text: successMessage || 'Save to Files, email, or another app',
+                url: uri,
+                dialogTitle: 'Save or share report',
+            });
         } catch (shareErr) {
-            if (shareErr && shareErr.name === 'AbortError') return;
             if (shareErr && String(shareErr.message || '').toLowerCase().includes('cancel')) {
                 return;
             }
-            if (shareErr && (shareErr.code === PDF_SHARE_UNAVAILABLE || shareErr.message === PDF_SHARE_UNAVAILABLE)) {
-                try {
-                    downloadPdfBlobInBrowser(pdfBlob, fileName);
-                } catch (dl) {
-                    console.error('PDF download fallback failed:', dl);
-                    throw shareErr;
-                }
-            } else {
-                try {
-                    downloadPdfBlobInBrowser(pdfBlob, fileName);
-                } catch (dl) {
-                    throw shareErr;
-                }
-            }
+            throw shareErr;
         }
 
         if (typeof Utils !== 'undefined' && Utils.showToast) {

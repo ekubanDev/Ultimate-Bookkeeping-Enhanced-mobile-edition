@@ -27,11 +27,6 @@
             --font-mono: 'JetBrains Mono', 'SF Mono', 'Fira Code', monospace;
         }
 
-        html, body {
-            touch-action: manipulation; /* reduces iOS double-tap/click delays */
-            -webkit-text-size-adjust: 100%;
-        }
-
         body {
             font-family: 'Roboto', sans-serif;
             background-color: var(--bg);
@@ -56,7 +51,6 @@
             display: flex;
             flex-direction: column;
             gap: 10px;
-            pointer-events: none; /* Avoid blocking taps on mobile */
         }
 
         .toast {
@@ -73,7 +67,6 @@
             border-left: 4px solid;
             position: relative;
             overflow: hidden;
-            pointer-events: none; /* Allow underlying UI interaction */
         }
 
         .toast-dismiss {
@@ -1195,11 +1188,6 @@ body.scanner-active::after {
     transition: left 0.3s cubic-bezier(0.4, 0.2, 1);
     overflow-y: auto;
     box-shadow: 2px 0 8px rgba(0, 0, 0, 0.2);
-    touch-action: pan-y; /* Prevent horizontal "dragging" */
-    -webkit-user-select: none;
-    user-select: none;
-    -webkit-touch-callout: none;
-    -webkit-user-drag: none;
 }
 
 .mobile-sidebar.active {

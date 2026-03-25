@@ -152,11 +152,7 @@ async function initializeApp() {
             heavyInitDone = true;
             window.enhancedDashboard = new EnhancedDashboard();
             console.log('✅ Enhanced Dashboard initialized');
-            // Auth often finishes before this runs on Safari; without a refresh we stay on legacy renderDashboard()
-            if (window.appController) {
-                window.appController.markSectionDirty('dashboard');
-                window.appController._refreshCurrentSectionIfDirty();
-            }
+            if (window.appController) window.appController.markSectionDirty('dashboard');
             barcodeScanner.initKeyboardScanner();
             aiChatService.init(state);
             window.aiChatService = aiChatService;

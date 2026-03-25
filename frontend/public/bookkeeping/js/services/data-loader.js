@@ -12,31 +12,6 @@ import { state } from '../utils/state.js';
 import { Utils } from '../utils/utils.js';
 import { firebaseService } from './firebase-service.js';
 
-/** WebKit: empty local cache before server merge; retry with server source when online. */
-async function fetchCollectionRows(colRef, label = 'collection') {
-    const pull = async (getOpts) => {
-        const snapshot = await colRef.get(getOpts);
-        const rows = [];
-        snapshot.forEach((docSnap) => {
-            rows.push({ id: docSnap.id, ...docSnap.data() });
-        });
-        return { snapshot, rows };
-    };
-    let { rows } = await pull();
-    if (rows.length === 0 && typeof navigator !== 'undefined' && navigator.onLine) {
-        try {
-            const second = await pull({ source: 'server' });
-            if (second.rows.length > 0) {
-                console.log(`[DataLoader] ${label}: ${second.rows.length} docs from server (cache was empty)`);
-                return second.rows;
-            }
-        } catch (e) {
-            console.warn(`[DataLoader] ${label}: server read failed`, e?.message || e);
-        }
-    }
-    return rows;
-}
-
 class DataLoaderService {
 
             async loadProducts() {
@@ -63,30 +38,30 @@ class DataLoaderService {
                         console.log('📦 Loading outlet inventory from:', `users/${parentAdminId}/outlets/${outletId}/inventory`);
                         
                         const inventoryRef = collection(db, 'users', parentAdminId, 'outlets', outletId, 'outlet_inventory');
-                        let rows = await fetchCollectionRows(inventoryRef, `outlet_inventory:${outletId}`);
-                        if (rows.length === 0 && parentAdminId) {
-                            const extra = await fetchCollectionRows(
-                                collection(db, 'users', parentAdminId, 'inventory'),
-                                'parent_inventory_fallback'
-                            );
-                            rows = rows.concat(extra);
-                        }
-                        state.allProducts = rows;
+                        const snapshot = await getDocs(inventoryRef);
+                        
+                        snapshot.forEach(doc => {
+                            state.allProducts.push({
+                                id: doc.id,
+                                ...doc.data()
+                            });
+                        });
                         
                         console.log('✓ Loaded outlet products:', state.allProducts.length);
                         
                     } else {
-                        // ADMIN: same paths as POS — user-scoped inventory first, then legacy root
-                        const uid = state.currentUser.uid;
-                        console.log('📦 Loading admin inventory (scoped then legacy):', `users/${uid}/inventory`);
-                        let rows = await fetchCollectionRows(
-                            collection(db, 'users', uid, 'inventory'),
-                            `users/${uid}/inventory`
-                        );
-                        if (rows.length === 0) {
-                            rows = await fetchCollectionRows(collection(db, 'inventory'), 'inventory_legacy');
-                        }
-                        state.allProducts = rows;
+                        // ADMIN: Load from main inventory
+                        console.log('📦 Loading main inventory from:', `users/${state.currentUser.uid}/inventory`);
+                        
+                        const productsRef = collection(db, 'inventory');
+                        const snapshot = await getDocs(productsRef);
+                        
+                        snapshot.forEach(doc => {
+                            state.allProducts.push({
+                                id: doc.id,
+                                ...doc.data()
+                            });
+                        });
                         
                         console.log('✓ Loaded main products:', state.allProducts.length);
                     }
@@ -122,16 +97,30 @@ class DataLoaderService {
                         console.log('💰 Loading outlet sales from:', `users/${parentAdminId}/outlets/${outletId}/sales`);
                         
                         const salesRef = collection(db, 'users', parentAdminId, 'outlets', outletId, 'outlet_sales');
-                        state.allSales = await fetchCollectionRows(salesRef, `outlet_sales:${outletId}`);
+                        const snapshot = await getDocs(salesRef);
+                        
+                        snapshot.forEach(doc => {
+                            state.allSales.push({
+                                id: doc.id,
+                                ...doc.data()
+                            });
+                        });
                         
                         console.log('✓ Loaded outlet sales:', state.allSales.length);
                         
                     } else {
-                        // ADMIN: root sales collection (matches app-controller / firebase usage)
-                        console.log('💰 Loading main sales from: sales/');
+                        // ADMIN: Load from main sales
+                        console.log('💰 Loading main sales from:', `users/${state.currentUser.uid}/sales`);
                         
                         const salesRef = collection(db, 'sales');
-                        state.allSales = await fetchCollectionRows(salesRef, 'sales');
+                        const snapshot = await getDocs(salesRef);
+                        
+                        snapshot.forEach(doc => {
+                            state.allSales.push({
+                                id: doc.id,
+                                ...doc.data()
+                            });
+                        });
                         
                         console.log('✓ Loaded main sales:', state.allSales.length);
                     }
