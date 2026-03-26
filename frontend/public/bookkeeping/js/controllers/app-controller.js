@@ -38,6 +38,8 @@ class AppController {
                 this._currentSection = null;
                 this._posInitialized = false;
                 this._posInitPromise = null;
+                // Track Firestore subscriptions so we can unsubscribe on user switch.
+                this._realtimeUnsubs = [];
                 this.initializeUI();
                 this.setupEventListeners();
                 this.setupAuthObserver();
@@ -1220,8 +1222,22 @@ class AppController {
             setupAuthObserver() {
                 onAuthStateChanged(auth, async (user) => {
                     if (user) {
+                        const prevUid = state.currentUser?.uid || null;
                         state.currentUser = user;
                         state.authInitialized = true;
+
+                        // Always reset section render flags on login so the UI re-renders
+                        // for the currently authenticated user (prevents stale dashboard after user switch).
+                        this._sectionRendered = {};
+                        this._sectionDirty = {};
+                        this._currentSection = null;
+
+                        // If switching users, clear old in-memory data so UI can't show previous user's view.
+                        if (prevUid && prevUid !== user.uid) {
+                            state.reset();
+                        }
+                        // Force dashboard + core sections to re-render on login.
+                        this.markSectionsDirty(['dashboard', 'sales', 'inventory', 'expenses', 'analytics', 'customers']);
                         
                         document.getElementById('login-modal').style.display = 'none';
                         document.getElementById('user-email').textContent = `Signed in as: ${user.email}`;
@@ -1250,6 +1266,7 @@ class AppController {
                         
                         // Show appropriate UI based on role
                         this.showAppUI();
+                        if (window.enhancedDashboard) window.enhancedDashboard.state = state;
                         await dataLoader.loadAll();
                         await this.loadSettings();
                         // Apply role-based restrictions
@@ -1264,6 +1281,13 @@ class AppController {
                         
                         Utils.hideSpinner();
                     } else {
+                        // Unsubscribe realtime listeners so old user data can't keep streaming in.
+                        if (Array.isArray(this._realtimeUnsubs) && this._realtimeUnsubs.length > 0) {
+                            this._realtimeUnsubs.forEach((fn) => {
+                                try { fn?.(); } catch (e) { /* noop */ }
+                            });
+                            this._realtimeUnsubs = [];
+                        }
                         state.currentUser = null;
                         state.authInitialized = true;
 
@@ -1272,6 +1296,11 @@ class AppController {
                         state.authInitialized = true;
                         this.showLoginUI();
                         state.reset();
+
+                        // Clear rendered/dirty flags so next login can't reuse stale DOM.
+                        this._sectionRendered = {};
+                        this._sectionDirty = {};
+                        this._currentSection = null;
                         
                         document.getElementById('user-email').style.display = 'none';
                         document.getElementById('logout-btn').style.display = 'none';
@@ -1508,6 +1537,7 @@ class AppController {
             applyRoleBasedUI() {
                 const roleDisplay = document.getElementById('user-role-display');
                 const outletContextEl = document.getElementById('outlet-context');
+                const quickExportItem = document.getElementById('quick-export-menu-item');
 
                 // Reset nav labels and admin controls before applying role-specific changes
                 const consignmentsNav = document.querySelector('nav li[data-section="consignments"]');
@@ -1565,6 +1595,7 @@ class AppController {
                     if (generateSettlementBtn) generateSettlementBtn.style.display = 'none';
                     if (addProductBtn) addProductBtn.style.display = 'none';
                     if (outletSelector) outletSelector.style.display = 'none';
+                    if (quickExportItem) quickExportItem.style.display = 'none';
                     
                     console.log('✓ Outlet Manager restrictions applied (Consignments visible for receiving)');
                 } else if (state.userRole === 'admin') {
@@ -1580,6 +1611,7 @@ class AppController {
                     if (generateSettlementBtn) generateSettlementBtn.style.display = '';
                     if (addProductBtn) addProductBtn.style.display = '';
                     if (outletSelector) outletSelector.style.display = '';
+                    if (quickExportItem) quickExportItem.style.display = '';
                 } else {
                     // Fallback: treat as admin but log for debugging
                     console.warn('Unknown userRole, defaulting to admin UI');
@@ -1593,6 +1625,7 @@ class AppController {
                     if (generateSettlementBtn) generateSettlementBtn.style.display = '';
                     if (addProductBtn) addProductBtn.style.display = '';
                     if (outletSelector) outletSelector.style.display = '';
+                    if (quickExportItem) quickExportItem.style.display = '';
                 }
             }
 
@@ -1969,6 +2002,14 @@ class AppController {
             }
 
             setupRealtimeListeners() {
+                // Unsubscribe existing listeners (important on logout/login user switch)
+                if (Array.isArray(this._realtimeUnsubs) && this._realtimeUnsubs.length > 0) {
+                    this._realtimeUnsubs.forEach((fn) => {
+                        try { fn?.(); } catch (e) { /* noop */ }
+                    });
+                    this._realtimeUnsubs = [];
+                }
+
                 const isOutletManager = state.userRole === 'outlet_manager' && state.assignedOutlet && state.parentAdminId;
 
                 // Inventory changes
@@ -1976,26 +2017,26 @@ class AppController {
                     ? collection(db, 'users', state.parentAdminId, 'outlets', state.assignedOutlet, 'outlet_inventory')
                     : firebaseService.getUserCollection('inventory');
 
-                onSnapshot(inventoryRef, () => {
+                this._realtimeUnsubs.push(onSnapshot(inventoryRef, () => {
                     dataLoader.loadProducts().then(() => {
                         this.markSectionsDirty(['inventory', 'dashboard', 'outlets', 'consignments', 'settlements']);
                         this.checkLowStockAndNotify();
                         this._refreshCurrentSectionIfDirty();
                         if (!isOutletManager) this.markSectionDirty('user-management');
                     });
-                });
+                }));
 
                 // Sales changes
                 const salesRef = isOutletManager
                     ? collection(db, 'users', state.parentAdminId, 'outlets', state.assignedOutlet, 'outlet_sales')
                     : firebaseService.getUserCollection('sales');
 
-                onSnapshot(salesRef, () => {
+                this._realtimeUnsubs.push(onSnapshot(salesRef, () => {
                     dataLoader.loadSales().then(() => {
                         this.markSectionsDirty(['sales', 'dashboard']);
                         this._refreshCurrentSectionIfDirty();
                     });
-                });
+                }));
 
                 // Expenses changes
                 if (isOutletManager) {
@@ -2007,34 +2048,34 @@ class AppController {
                         state.assignedOutlet,
                         'outlet_expenses'
                     );
-                    onSnapshot(outletExpensesRef, () => {
+                    this._realtimeUnsubs.push(onSnapshot(outletExpensesRef, () => {
                         dataLoader.loadExpenses().then(() => {
                             this.markSectionsDirty(['expenses', 'dashboard', 'analytics']);
                             this._refreshCurrentSectionIfDirty();
                         });
-                    });
+                    }));
                 } else if (state.userRole === 'admin') {
-                    onSnapshot(firebaseService.getUserCollection('expenses'), () => {
+                    this._realtimeUnsubs.push(onSnapshot(firebaseService.getUserCollection('expenses'), () => {
                         dataLoader.loadExpenses().then(() => {
                             this.markSectionsDirty(['expenses', 'dashboard', 'analytics']);
                             this._refreshCurrentSectionIfDirty();
                         });
-                    });
+                    }));
                 }
 
-                onSnapshot(firebaseService.getUserCollection('customers'), () => {
+                this._realtimeUnsubs.push(onSnapshot(firebaseService.getUserCollection('customers'), () => {
                     dataLoader.loadCustomers().then(() => {
                         this.markSectionDirty('customers');
                         this._refreshCurrentSectionIfDirty();
                     });
-                });
+                }));
 
-                onSnapshot(firebaseService.getUserCollection('liabilities'), () => {
+                this._realtimeUnsubs.push(onSnapshot(firebaseService.getUserCollection('liabilities'), () => {
                     dataLoader.loadLiabilities().then(() => {
                         this.markSectionsDirty(['liabilities', 'dashboard', 'accounting']);
                         this._refreshCurrentSectionIfDirty();
                     });
-                });
+                }));
             }
 
             async handleLogin(e) {
@@ -3512,8 +3553,8 @@ class AppController {
                 
                 try {
                     if (window.formValidator) {
-                        const validation = window.formValidator.validateExpense({
-                            description: document.getElementById('expense-desc')?.value,
+                        const validation = window.formValidator.validateExpenseForm({
+                            description: document.getElementById('expense-description')?.value,
                             amount: document.getElementById('expense-amount')?.value,
                             category: document.getElementById('expense-category')?.value,
                             date: document.getElementById('expense-date')?.value
@@ -5996,6 +6037,10 @@ class AppController {
             
             // Show PDF export modal
             showPDFExportModal() {
+                if (state.userRole === 'outlet_manager') {
+                    Utils.showToast('Quick Export is restricted to administrators', 'warning');
+                    return;
+                }
                 if (window.pdfExport) {
                     window.pdfExport.showExportModal();
                 }
@@ -7444,10 +7489,14 @@ class AppController {
                     const amount = parseFloat(e.amount);
                     return !isNaN(amount) && amount !== null && amount !== undefined;
                 });
+
+                // Exclude debt/liability payments from operating expenses (principal is not a P&L expense)
+                const operatingExpenses = validExpenses.filter(e => !this.isDebtPayment(e));
+                const debtPayments = validExpenses.filter(e => this.isDebtPayment(e));
                 
                 // Group expenses by category
                 const expensesByCategory = {};
-                validExpenses.forEach(e => {
+                operatingExpenses.forEach(e => {
                     const category = e.category || 'Other';
                     if (!expensesByCategory[category]) {
                         expensesByCategory[category] = 0;
@@ -7456,6 +7505,7 @@ class AppController {
                 });
                 
                 const totalOperatingExpenses = Object.values(expensesByCategory).reduce((sum, amt) => sum + amt, 0);
+                const totalDebtPayments = debtPayments.reduce((sum, e) => sum + (parseFloat(e.amount) || 0), 0);
                 const netIncome = grossProfit - totalOperatingExpenses;
                 
                 // Generate expense rows HTML
@@ -7522,6 +7572,12 @@ class AppController {
                                 <td>Total Operating Expenses</td>
                                 <td class="amount">(${Utils.formatCurrency(totalOperatingExpenses)})</td>
                             </tr>
+                            ${totalDebtPayments > 0 ? `
+                            <tr>
+                                <td style="padding-left: 20px; color: #666;">Debt/Liability Payments (not an expense)</td>
+                                <td class="amount" style="color: #666;">${Utils.formatCurrency(totalDebtPayments)}</td>
+                            </tr>
+                            ` : ''}
                             <tr><td colspan="2">&nbsp;</td></tr>
                             <tr class="total-row">
                                 <td><strong>NET INCOME</strong></td>
@@ -7533,7 +7589,8 @@ class AppController {
                         <div style="margin-top: 30px; padding: 15px; background: #f8f9fa; border-radius: 5px;">
                             <p style="margin: 5px 0;"><strong>Period Summary:</strong></p>
                             <p style="margin: 5px 0;">Sales Transactions: ${periodSales.length}</p>
-                            <p style="margin: 5px 0;">Expense Transactions: ${validExpenses.length}</p>
+                            <p style="margin: 5px 0;">Operating Expense Transactions: ${operatingExpenses.length}</p>
+                            ${totalDebtPayments > 0 ? `<p style="margin: 5px 0;">Debt/Liability Payment Transactions: ${debtPayments.length}</p>` : ''}
                             <p style="margin: 5px 0;">Gross Profit Margin: ${totalRevenue > 0 ? ((grossProfit / totalRevenue) * 100).toFixed(1) : 0}%</p>
                             <p style="margin: 5px 0;">Net Profit Margin: ${totalRevenue > 0 ? ((netIncome / totalRevenue) * 100).toFixed(1) : 0}%</p>
                         </div>

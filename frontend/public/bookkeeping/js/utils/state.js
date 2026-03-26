@@ -29,6 +29,8 @@ export class AppState {
         this.assignedOutlet = null; // for outlet managers
         this.allOutlets = [];
         this.currentOutletView = 'main'; // 'main' or outlet_id
+        // Admin outlet filter for dashboards/analytics
+        this.selectedOutletFilter = 'main'; // 'main' | 'all' | outlet_id
         this.managedUsers = [];
         
         // Date range for analytics
@@ -51,6 +53,13 @@ export class AppState {
     }
 
     reset() {
+        // Reset identity/context (critical on user switch)
+        this.userRole = null;
+        this.parentAdminId = null;
+        this.assignedOutlet = null;
+        this.currentOutletView = 'main';
+        this.selectedOutletFilter = 'main';
+
         this.allProducts = [];
         this.allSales = [];
         this.allExpenses = [];

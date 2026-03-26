@@ -15,6 +15,12 @@ class ExportService {
         this.initialized = false;
     }
 
+    isDebtPayment(expense) {
+        const type = String(expense?.expenseType || '').toLowerCase();
+        const category = String(expense?.category || '').toLowerCase();
+        return type === 'liability_payment' || category === 'debt payment' || category === 'loan repayment';
+    }
+
     // ==================== CSV EXPORT ====================
 
     async exportToCSV(data, filename, columns = null) {
@@ -414,14 +420,18 @@ class ExportService {
         });
 
         const totalRevenue = periodSales.reduce((sum, s) => sum + (parseFloat(s.total) || 0), 0);
-        const totalExpenses = periodExpenses.reduce((sum, e) => sum + (parseFloat(e.amount) || 0), 0);
+        const operatingExpenses = periodExpenses.filter(e => !this.isDebtPayment(e));
+        const debtPayments = periodExpenses.filter(e => this.isDebtPayment(e));
+        const totalExpenses = operatingExpenses.reduce((sum, e) => sum + (parseFloat(e.amount) || 0), 0);
+        const totalDebtPayments = debtPayments.reduce((sum, e) => sum + (parseFloat(e.amount) || 0), 0);
         const totalLiabilities = periodLiabilities.reduce((sum, l) => sum + (parseFloat(l.balance) || 0), 0);
 
         if (type === 'income') {
             title = `Income Statement - ${period} (GHS)`;
             data = [
                 { Category: 'Total Revenue', Amount: Utils.formatCurrencyGHS(totalRevenue) },
-                { Category: 'Total Expenses', Amount: Utils.formatCurrencyGHS(totalExpenses) },
+                { Category: 'Operating Expenses', Amount: Utils.formatCurrencyGHS(totalExpenses) },
+                { Category: 'Debt/Liability Payments (not expense)', Amount: Utils.formatCurrencyGHS(totalDebtPayments) },
                 { Category: 'Net Income', Amount: Utils.formatCurrencyGHS(totalRevenue - totalExpenses) }
             ];
             columns = [

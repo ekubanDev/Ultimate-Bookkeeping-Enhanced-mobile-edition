@@ -1,4 +1,4 @@
-const CACHE_VERSION = 'ubk-v12';
+const CACHE_VERSION = 'ubk-v13';
 const STATIC_CACHE = `static-${CACHE_VERSION}`;
 const DYNAMIC_CACHE = `dynamic-${CACHE_VERSION}`;
 const CDN_CACHE = `cdn-${CACHE_VERSION}`;
@@ -115,6 +115,16 @@ self.addEventListener('fetch', (event) => {
   if (request.method !== 'GET') return;
 
   const url = new URL(request.url);
+
+  // Never intercept Firestore streaming/long-poll channel traffic.
+  // These requests are stateful and can break when routed through SW caching strategies.
+  if (
+    url.hostname === 'firestore.googleapis.com' &&
+    url.pathname.includes('/google.firestore.v1.Firestore/') &&
+    url.pathname.endsWith('/channel')
+  ) {
+    return;
+  }
 
   // API requests: network-first
   if (API_PATTERNS.some((p) => url.href.includes(p))) {
