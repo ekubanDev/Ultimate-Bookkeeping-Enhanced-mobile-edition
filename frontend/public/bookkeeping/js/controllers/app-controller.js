@@ -36,6 +36,7 @@ class AppController {
                 this._sectionRendered = {};
                 this._sectionDirty = {};
                 this._currentSection = null;
+                this._realtimeUnsubs = [];
                 this._posInitialized = false;
                 this._posInitPromise = null;
                 this.initializeUI();
@@ -112,9 +113,24 @@ class AppController {
                     case 'outlets': this.renderOutlets(); break;
                     case 'forecasting': this.renderForecasting(); break;
                     case 'reports': this.renderReports(); break;
+                    case 'user-management': this.loadManagedUsers(); break;
+                    case 'settings': this.loadSettings(); break;
                     default: break;
                 }
                 this._markRendered(cur);
+            }
+
+            /** Sections backed by Firestore/state that should re-render after remote data changes. */
+            _markAllDataSectionsDirty() {
+                this.markSectionsDirty([
+                    'dashboard', 'sales', 'inventory', 'expenses', 'customers', 'analytics',
+                    'accounting', 'forecasting', 'reports', 'suppliers', 'purchase-orders',
+                    'consignments', 'settlements', 'liabilities', 'outlets', 'pos'
+                ]);
+            }
+
+            _registerRealtimeUnsub(unsub) {
+                if (typeof unsub === 'function') this._realtimeUnsubs.push(unsub);
             }
 
             initializeUI() {
@@ -1220,6 +1236,11 @@ class AppController {
             setupAuthObserver() {
                 onAuthStateChanged(auth, async (user) => {
                     if (user) {
+                        // Account switch / re-auth: remove previous user's listeners before rebinding
+                        if (Array.isArray(this._realtimeUnsubs) && this._realtimeUnsubs.length > 0) {
+                            this._realtimeUnsubs.forEach((fn) => { try { fn(); } catch (e) { /* noop */ } });
+                            this._realtimeUnsubs = [];
+                        }
                         state.currentUser = user;
                         state.authInitialized = true;
                         
@@ -1230,12 +1251,8 @@ class AppController {
                         document.getElementById('connection-status').textContent = 'Connected';
                         
                         await firebaseService.ensureUserData();
-                        
-                        
-                        //this.renderDashboard();
-                        this.setupRealtimeListeners();
 
-                        // Load user role
+                        // Load user role (listeners need correct role + outlets; registered after loadAll)
                         const roleData = await firebaseService.getUserRole();
                         state.userRole = roleData.role;
                         state.assignedOutlet = roleData.assignedOutlet;
@@ -1252,6 +1269,7 @@ class AppController {
                         this.showAppUI();
                         await dataLoader.loadAll();
                         await this.loadSettings();
+                        this.setupRealtimeListeners();
                         // Apply role-based restrictions
                         this.applyRoleBasedUI();
                         
@@ -1264,6 +1282,10 @@ class AppController {
                         
                         Utils.hideSpinner();
                     } else {
+                        if (Array.isArray(this._realtimeUnsubs) && this._realtimeUnsubs.length > 0) {
+                            this._realtimeUnsubs.forEach((fn) => { try { fn(); } catch (e) { /* noop */ } });
+                            this._realtimeUnsubs = [];
+                        }
                         state.currentUser = null;
                         state.authInitialized = true;
 
@@ -1969,72 +1991,125 @@ class AppController {
             }
 
             setupRealtimeListeners() {
+                if (Array.isArray(this._realtimeUnsubs) && this._realtimeUnsubs.length > 0) {
+                    this._realtimeUnsubs.forEach((fn) => { try { fn(); } catch (e) { /* noop */ } });
+                    this._realtimeUnsubs = [];
+                }
+
+                if (!state.currentUser?.uid) return;
+
+                const uid = state.currentUser.uid;
                 const isOutletManager = state.userRole === 'outlet_manager' && state.assignedOutlet && state.parentAdminId;
 
-                // Inventory changes
-                const inventoryRef = isOutletManager
-                    ? collection(db, 'users', state.parentAdminId, 'outlets', state.assignedOutlet, 'outlet_inventory')
-                    : firebaseService.getUserCollection('inventory');
-
-                onSnapshot(inventoryRef, () => {
+                const bumpInventory = () => {
                     dataLoader.loadProducts().then(() => {
-                        this.markSectionsDirty(['inventory', 'dashboard', 'outlets', 'consignments', 'settlements']);
+                        this._markAllDataSectionsDirty();
+                        if (!isOutletManager) this.markSectionDirty('user-management');
                         this.checkLowStockAndNotify();
                         this._refreshCurrentSectionIfDirty();
-                        if (!isOutletManager) this.markSectionDirty('user-management');
                     });
-                });
+                };
 
-                // Sales changes
-                const salesRef = isOutletManager
-                    ? collection(db, 'users', state.parentAdminId, 'outlets', state.assignedOutlet, 'outlet_sales')
-                    : firebaseService.getUserCollection('sales');
-
-                onSnapshot(salesRef, () => {
+                const bumpSales = () => {
                     dataLoader.loadSales().then(() => {
-                        this.markSectionsDirty(['sales', 'dashboard']);
+                        this._markAllDataSectionsDirty();
                         this._refreshCurrentSectionIfDirty();
                     });
-                });
+                };
 
-                // Expenses changes
-                if (isOutletManager) {
-                    const outletExpensesRef = collection(
-                        db,
-                        'users',
-                        state.parentAdminId,
-                        'outlets',
-                        state.assignedOutlet,
-                        'outlet_expenses'
-                    );
-                    onSnapshot(outletExpensesRef, () => {
-                        dataLoader.loadExpenses().then(() => {
-                            this.markSectionsDirty(['expenses', 'dashboard', 'analytics']);
-                            this._refreshCurrentSectionIfDirty();
-                        });
+                const bumpExpenses = () => {
+                    dataLoader.loadExpenses().then(() => {
+                        this._markAllDataSectionsDirty();
+                        this._refreshCurrentSectionIfDirty();
                     });
-                } else if (state.userRole === 'admin') {
-                    onSnapshot(firebaseService.getUserCollection('expenses'), () => {
-                        dataLoader.loadExpenses().then(() => {
-                            this.markSectionsDirty(['expenses', 'dashboard', 'analytics']);
-                            this._refreshCurrentSectionIfDirty();
-                        });
+                };
+
+                const bumpCustomers = () => {
+                    dataLoader.loadCustomers().then(() => {
+                        this._markAllDataSectionsDirty();
+                        this._refreshCurrentSectionIfDirty();
+                    });
+                };
+
+                const bumpLiabilities = () => {
+                    dataLoader.loadLiabilities().then(() => {
+                        this._markAllDataSectionsDirty();
+                        this._refreshCurrentSectionIfDirty();
+                    });
+                };
+
+                const bumpSuppliers = () => {
+                    dataLoader.loadSuppliers().then(() => {
+                        this.markSectionsDirty(['suppliers', 'dashboard', 'reports', 'purchase-orders', 'liabilities', 'accounting']);
+                        this._refreshCurrentSectionIfDirty();
+                    });
+                };
+
+                const bumpPurchaseOrders = () => {
+                    dataLoader.loadPurchaseOrders().then(() => {
+                        this.markSectionsDirty(['purchase-orders', 'dashboard', 'reports', 'liabilities', 'suppliers', 'accounting', 'inventory']);
+                        this._refreshCurrentSectionIfDirty();
+                    });
+                };
+
+                const bumpOutlets = () => {
+                    dataLoader.loadOutlets().then(() => {
+                        this._markAllDataSectionsDirty();
+                        this._refreshCurrentSectionIfDirty();
+                    });
+                };
+
+                const bumpSettingsDoc = () => {
+                    this.loadSettings().then(() => {
+                        this.markSectionsDirty(['settings', 'dashboard']);
+                        this._refreshCurrentSectionIfDirty();
+                    });
+                };
+
+                // —— Inventory (paths aligned with dataLoader.loadProducts) ——
+                if (isOutletManager) {
+                    const invRef = collection(db, 'users', state.parentAdminId, 'outlets', state.assignedOutlet, 'outlet_inventory');
+                    this._registerRealtimeUnsub(onSnapshot(invRef, bumpInventory));
+                } else {
+                    this._registerRealtimeUnsub(onSnapshot(collection(db, 'users', uid, 'inventory'), bumpInventory));
+                    this._registerRealtimeUnsub(onSnapshot(collection(db, 'inventory'), bumpInventory));
+                }
+
+                // —— Sales (admin: root sales + each outlet_sales under users/{uid}/outlets) ——
+                if (isOutletManager) {
+                    const salesRef = collection(db, 'users', state.parentAdminId, 'outlets', state.assignedOutlet, 'outlet_sales');
+                    this._registerRealtimeUnsub(onSnapshot(salesRef, bumpSales));
+                } else {
+                    this._registerRealtimeUnsub(onSnapshot(collection(db, 'sales'), bumpSales));
+                    (state.allOutlets || []).forEach((o) => {
+                        if (!o?.id) return;
+                        const outletSalesRef = collection(db, 'users', uid, 'outlets', o.id, 'outlet_sales');
+                        this._registerRealtimeUnsub(onSnapshot(outletSalesRef, bumpSales));
                     });
                 }
 
-                onSnapshot(firebaseService.getUserCollection('customers'), () => {
-                    dataLoader.loadCustomers().then(() => {
-                        this.markSectionDirty('customers');
-                        this._refreshCurrentSectionIfDirty();
+                // —— Expenses (outlet manager: same path as loadExpenses — outlets/{id}/outlet_expenses) ——
+                if (isOutletManager) {
+                    const expRef = firebaseService.getOutletSubCollection(state.assignedOutlet, 'outlet_expenses');
+                    this._registerRealtimeUnsub(onSnapshot(expRef, bumpExpenses));
+                } else if (state.userRole === 'admin') {
+                    this._registerRealtimeUnsub(onSnapshot(firebaseService.getUserCollection('expenses'), bumpExpenses));
+                    (state.allOutlets || []).forEach((o) => {
+                        if (!o?.id) return;
+                        const oref = firebaseService.getOutletSubCollection(o.id, 'outlet_expenses');
+                        this._registerRealtimeUnsub(onSnapshot(oref, bumpExpenses));
                     });
-                });
+                }
 
-                onSnapshot(firebaseService.getUserCollection('liabilities'), () => {
-                    dataLoader.loadLiabilities().then(() => {
-                        this.markSectionsDirty(['liabilities', 'dashboard', 'accounting']);
-                        this._refreshCurrentSectionIfDirty();
-                    });
-                });
+                this._registerRealtimeUnsub(onSnapshot(firebaseService.getUserCollection('customers'), bumpCustomers));
+                this._registerRealtimeUnsub(onSnapshot(firebaseService.getUserCollection('liabilities'), bumpLiabilities));
+
+                if (state.userRole === 'admin') {
+                    this._registerRealtimeUnsub(onSnapshot(collection(db, 'suppliers'), bumpSuppliers));
+                    this._registerRealtimeUnsub(onSnapshot(collection(db, 'purchase_orders'), bumpPurchaseOrders));
+                    this._registerRealtimeUnsub(onSnapshot(firebaseService.getOutletsCollection(), bumpOutlets));
+                    this._registerRealtimeUnsub(onSnapshot(firebaseService.settingsRef(), bumpSettingsDoc));
+                }
             }
 
             async handleLogin(e) {
@@ -3761,7 +3836,7 @@ class AppController {
                     await dataLoader.loadSales();
                     await dataLoader.loadProducts();
                     
-                    this.markSectionsDirty(['dashboard', 'expenses', 'analytics', 'sales', 'inventory']);
+                    this._markAllDataSectionsDirty();
                     this._refreshCurrentSectionIfDirty();
                     Utils.showToast(`Viewing data for: ${this.getOutletDisplayName(outletId)}`, 'success');
                 } catch (error) {
@@ -11642,7 +11717,8 @@ class AppController {
                             await batch.commit();
                             
                             await dataLoader.loadAll();
-                            this.markSectionsDirty(['dashboard', 'sales', 'inventory', 'expenses', 'customers', 'analytics']);
+                            this._markAllDataSectionsDirty();
+                            this.markSectionsDirty(['suppliers', 'purchase-orders', 'liabilities', 'outlets', 'accounting', 'settings', 'user-management']);
                             this._refreshCurrentSectionIfDirty();
                             Utils.showToast('Data restored successfully', 'success');
                             document.getElementById('restore-file-input').value = '';
