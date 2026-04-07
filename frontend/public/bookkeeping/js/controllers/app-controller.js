@@ -1246,11 +1246,6 @@ class AppController {
                         document.getElementById('connection-status').textContent = 'Connected';
                         
                         await firebaseService.ensureUserData();
-                        
-                        
-                        //this.renderDashboard();
-                        this.setupRealtimeListeners();
-
                         // Load user role
                         const roleData = await firebaseService.getUserRole();
                         state.userRole = roleData.role;
@@ -1268,6 +1263,8 @@ class AppController {
                         this.showAppUI();
                         if (window.enhancedDashboard) window.enhancedDashboard.state = state;
                         await dataLoader.loadAll();
+                        // Bind realtime listeners after role + outlet context are loaded.
+                        this.setupRealtimeListeners();
                         await this.loadSettings();
                         // Apply role-based restrictions
                         this.applyRoleBasedUI();
@@ -2061,6 +2058,19 @@ class AppController {
                             this._refreshCurrentSectionIfDirty();
                         });
                     }));
+                    // Admin can view outlet-scoped expenses too; subscribe so Expenses refreshes immediately.
+                    (state.allOutlets || []).forEach((outlet) => {
+                        if (!outlet?.id) return;
+                        this._realtimeUnsubs.push(onSnapshot(
+                            firebaseService.getOutletSubCollection(outlet.id, 'outlet_expenses'),
+                            () => {
+                                dataLoader.loadExpenses().then(() => {
+                                    this.markSectionsDirty(['expenses', 'dashboard', 'analytics']);
+                                    this._refreshCurrentSectionIfDirty();
+                                });
+                            }
+                        ));
+                    });
                 }
 
                 this._realtimeUnsubs.push(onSnapshot(firebaseService.getUserCollection('customers'), () => {
@@ -3975,25 +3985,7 @@ class AppController {
                     });
                     console.log('✅ Payment transaction record queued');
                     
-                    // 4. Record payment as expense (cash outflow)
-                    console.log('\n=== CREATING EXPENSE ENTRY ===');
-                    const expenseRef = doc(collection(db, 'expenses'));
-                    batch.set(expenseRef, {
-                        date: paymentDate,
-                        description: `Payment to ${liability.creditor || liability.supplierName || 'creditor'} - ${liability.description}`,
-                        category: 'Debt Payment',
-                        amount: paymentAmount,
-                        paymentMethod: paymentMethod,
-                        notes: paymentNotes,
-                        linkedLiabilityId: liabilityId,
-                        linkedPaymentId: paymentRef.id,
-                        expenseType: 'liability_payment',
-                        createdBy: state.currentUser.uid,
-                        createdAt: serverTimestamp()
-                    });
-                    console.log('✅ Expense entry queued');
-                    
-                    // Commit all changes
+                    // 4. Commit all changes (liability + supplier + payment transaction only)
                     console.log('\n=== COMMITTING BATCH ===');
                     await batch.commit();
                     console.log('✅✅✅ PAYMENT RECORDED SUCCESSFULLY! ✅✅✅');
@@ -9257,8 +9249,9 @@ class AppController {
                         const transfers = [];
                         for (const outlet of state.allOutlets) {
                             try {
+                                const ownerUid = outlet.createdBy || state.currentUser.uid;
                                 const snapshot = await getDocs(
-                                    collection(db, 'users', state.currentUser.uid, 'outlets', outlet.id, 'outlet_inventory')
+                                    collection(db, 'users', ownerUid, 'outlets', outlet.id, 'outlet_inventory')
                                 );
                                 snapshot.forEach(d => {
                                     const data = d.data();
@@ -10387,6 +10380,7 @@ class AppController {
             async calculateSettlement(outletId, period) {
                 try {
                     const outlet = state.allOutlets.find(o => o.id === outletId);
+                    if (!outlet) return null;
                     const [year, month] = period.split('-');
                     
                     // Get date range for the period
@@ -10418,12 +10412,14 @@ class AppController {
                     consignmentsSnapshot.forEach(doc => {
                         const consignment = doc.data();
                         if (consignment.date >= startDateStr && consignment.date <= endDateStr && consignment.status === 'confirmed') {
-                            consignmentsReceivedValue += consignment.totalCostValue;
+                            const consignmentValue = parseFloat(consignment.totalCostValue) || 0;
+                            const consignmentItems = parseInt(consignment.totalQuantity, 10) || 0;
+                            consignmentsReceivedValue += consignmentValue;
                             consignmentsList.push({
                                 id: doc.id,
                                 date: consignment.date,
-                                value: consignment.totalCostValue,
-                                items: consignment.totalQuantity
+                                value: consignmentValue,
+                                items: consignmentItems
                             });
                         }
                     });
@@ -10455,9 +10451,9 @@ class AppController {
                             salesList.push({
                                 id: doc.id,
                                 date: sale.date,
-                                customer: sale.customer,
-                                product: sale.product,
-                                quantity: sale.quantity,
+                                customer: sale.customer || 'Walk-in',
+                                product: sale.product || sale.productName || 'Unknown Product',
+                                quantity: parseFloat(sale.quantity) || 0,
                                 value: saleTotal
                             });
                         }
@@ -10473,12 +10469,14 @@ class AppController {
                     
                     currentInventorySnapshot.forEach(doc => {
                         const item = doc.data();
-                        const itemValue = item.quantity * item.cost;
+                        const qty = parseFloat(item.quantity) || 0;
+                        const cost = parseFloat(item.cost) || parseFloat(item.unitCost) || parseFloat(item.price) || 0;
+                        const itemValue = qty * cost;
                         closingInventoryValue += itemValue;
                         closingInventoryList.push({
-                            name: item.name,
-                            quantity: item.quantity,
-                            cost: item.cost,
+                            name: item.name || 'Unnamed Item',
+                            quantity: qty,
+                            cost: cost,
                             value: itemValue
                         });
                     });
@@ -10494,7 +10492,8 @@ class AppController {
                     const grossProfit = totalSalesValue - finalCOGS;
                     
                     // 7. Calculate Commission (outlet's earnings)
-                    const commissionRate = outlet.commissionRate / 100;
+                    const commissionRatePercent = parseFloat(outlet.commissionRate) || 0;
+                    const commissionRate = commissionRatePercent / 100;
                     const outletCommission = grossProfit * commissionRate;
                     
                     // 8. Calculate Amount Payable to Main Shop
@@ -10522,7 +10521,7 @@ class AppController {
                         grossProfit: grossProfit,
                         
                         // Commission
-                        commissionRate: outlet.commissionRate,
+                        commissionRate: commissionRatePercent,
                         outletCommission: outletCommission,
                         
                         // Payment
@@ -10538,7 +10537,7 @@ class AppController {
                         
                         // Metadata
                         generatedAt: new Date().toISOString(),
-                        generatedBy: state.currentUser.email
+                        generatedBy: state.currentUser?.email || 'system'
                     };
                     
                     return settlement;

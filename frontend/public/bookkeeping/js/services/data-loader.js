@@ -37,6 +37,51 @@ async function fetchCollectionRows(colRef, label = 'collection') {
     return rows;
 }
 
+function isDebtPaymentExpense(expense) {
+    const type = String(expense?.expenseType || '').toLowerCase();
+    const cat = String(expense?.category || '').toLowerCase();
+    return type === 'liability_payment' || cat === 'debt payment' || cat === 'loan repayment';
+}
+
+/**
+ * Stock value for Outlets Management: canonical data lives under
+ * users/{ownerUid}/outlets/{outletId}/outlet_inventory (POS, transfers, consignment confirm).
+ * Legacy consignments used subcollection name "inventory" — include those lines when not superseded by productId.
+ */
+async function computeOutletInventoryValue(db, ownerUid, outletId) {
+    const lineValue = (item) => {
+        const qty = parseFloat(item.quantity) || 0;
+        let unit = parseFloat(item.cost);
+        if (!Number.isFinite(unit) || unit <= 0) unit = parseFloat(item.unitCost) || 0;
+        if (!Number.isFinite(unit) || unit <= 0) unit = parseFloat(item.price) || 0;
+        if (!Number.isFinite(unit) || unit <= 0) unit = parseFloat(item.retail) || 0;
+        return qty * unit;
+    };
+
+    const seenProductKeys = new Set();
+    let total = 0;
+
+    const oiRef = collection(db, 'users', ownerUid, 'outlets', outletId, 'outlet_inventory');
+    const snapOI = await getDocs(oiRef);
+    snapOI.forEach((docSnap) => {
+        const item = docSnap.data();
+        const key = String(item.productId ?? docSnap.id);
+        seenProductKeys.add(key);
+        total += lineValue(item);
+    });
+
+    const legRef = collection(db, 'users', ownerUid, 'outlets', outletId, 'inventory');
+    const snapLeg = await getDocs(legRef);
+    snapLeg.forEach((docSnap) => {
+        const item = docSnap.data();
+        const key = String(item.productId ?? docSnap.id);
+        if (seenProductKeys.has(key)) return;
+        total += lineValue(item);
+    });
+
+    return total;
+}
+
 class DataLoaderService {
 
             async loadProducts() {
@@ -239,7 +284,9 @@ class DataLoaderService {
                             });
                         }
                     }
-                    
+
+                    // Keep debt principal repayments out of operating expenses.
+                    state.allExpenses = state.allExpenses.filter((e) => !isDebtPaymentExpense(e));
                     return state.allExpenses;
                 } catch (error) {
                     console.error('Load expenses error:', error);
@@ -326,19 +373,10 @@ class DataLoaderService {
                     
                     for (const outletDoc of snapshot.docs) {
                         const outletData = { ...outletDoc.data(), id: outletDoc.id };
-                        
 
-
-                        // Load outlet inventory - FIXED: use 'outlet_inventory' not 'inventory'
-                        const inventorySnapshot = await getDocs(
-                            collection(db, 'users', state.currentUser.uid, 'outlets', outletDoc.id, 'outlet_inventory')
-                        );
-                        let inventoryValue = 0;
-                        inventorySnapshot.forEach(doc => {
-                            const item = doc.data();
-                            inventoryValue += (item.quantity || 0) * (item.cost || 0);
-                        });
-                        outletData.inventoryValue = inventoryValue;
+                        // Inventory is stored under the admin who owns the outlet (createdBy), not always the signed-in uid
+                        const ownerUid = outletData.createdBy || state.currentUser.uid;
+                        outletData.inventoryValue = await computeOutletInventoryValue(db, ownerUid, outletDoc.id);
                         
                         state.allOutlets.push(outletData);
                     }
