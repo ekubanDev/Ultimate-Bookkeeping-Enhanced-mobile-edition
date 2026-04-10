@@ -17,6 +17,8 @@ export class AppState {
         this.allExpenses = [];
         this.allCustomers = [];
         this.allLiabilities = [];
+        /** Liability/debt repayments from payment_transactions (not expenses). */
+        this.allLiabilityPayments = [];
         this.allSuppliers = [];
         this.allPurchaseOrders = [];
         this.charts = {};
@@ -65,6 +67,7 @@ export class AppState {
         this.allExpenses = [];
         this.allCustomers = [];
         this.allLiabilities = [];
+        this.allLiabilityPayments = [];
         this.allOutlets = []; 
         this.managedUsers = [];
         

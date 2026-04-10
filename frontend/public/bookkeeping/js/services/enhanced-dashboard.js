@@ -68,7 +68,15 @@ export class EnhancedDashboard {
         const currentSales = (this.state?.allSales || []).filter(s => s.date >= start && s.date <= end);
         const allCurrentExpenses = (this.state?.allExpenses || []).filter(e => e.date >= start && e.date <= end);
         const currentExpenses = allCurrentExpenses.filter(e => !this.isDebtPayment(e));
+        /** Legacy rows only (new repayments use payment_transactions, not expenses). */
         const currentDebtPayments = allCurrentExpenses.filter(e => this.isDebtPayment(e));
+        const liabilityPayInPeriod = (this.state?.allLiabilityPayments || []).filter(
+            (p) => (p.paymentDate || '') >= start && (p.paymentDate || '') <= end
+        );
+        const debtFromTransactions = liabilityPayInPeriod.reduce(
+            (sum, p) => sum + (parseFloat(p.amount) || 0),
+            0
+        );
 
         // Previous period data for comparison
         const prevSales = (this.state?.allSales || []).filter(s => s.date >= prevStart && s.date <= prevEnd);
@@ -81,7 +89,9 @@ export class EnhancedDashboard {
 
         // Expense calculations (operating expenses only, excludes debt payments)
         const expenses = currentExpenses.reduce((sum, e) => sum + (e.amount || 0), 0);
-        const debtPayments = currentDebtPayments.reduce((sum, e) => sum + (e.amount || 0), 0);
+        const debtPayments =
+            debtFromTransactions
+            + currentDebtPayments.reduce((sum, e) => sum + (e.amount || 0), 0);
         const prevExpensesTotal = prevExpenses.reduce((sum, e) => sum + (e.amount || 0), 0);
         const expenseChange = prevExpensesTotal > 0 ? ((expenses - prevExpensesTotal) / prevExpensesTotal * 100) : 0;
 

@@ -121,6 +121,18 @@ class EmailSettingsRequest(BaseModel):
     dailyReports: bool = False
     notificationEmail: str = ""
 
+class MetricsEventRequest(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    event_name: str
+    event_version: int = 1
+    event_id: Optional[str] = None
+    correlation_id: Optional[str] = None
+    timestamp_client: Optional[str] = None
+    timestamp_server: Optional[str] = None
+    actor: Dict[str, Any] = Field(default_factory=dict)
+    context: Dict[str, Any] = Field(default_factory=dict)
+    payload: Dict[str, Any] = Field(default_factory=dict)
+
 # API Routes
 @api_router.get("/")
 async def root():
@@ -130,15 +142,6 @@ async def root():
 async def health_check():
     return {"status": "healthy", "app": "Ultimate Bookkeeping", "version": "2.0"}
 
-
-@api_router.options("/{full_path:path}")
-async def cors_preflight_handler(full_path: str):
-    """
-    Handle CORS preflight requests explicitly so that Cloud Run never returns 404
-    for OPTIONS on /api/... paths (which would cause browsers to block requests).
-    The CORSMiddleware will attach the appropriate CORS headers.
-    """
-    return Response(status_code=204)
 
 @api_router.post("/status", response_model=StatusCheck)
 async def create_status_check(input: StatusCheckCreate):
@@ -886,6 +889,108 @@ async def email_update_settings(request: EmailSettingsRequest):
     return {"status": "updated", "emailNotifications": request.emailNotifications, "dailyReports": request.dailyReports}
 
 
+@api_router.post("/metrics/events")
+async def ingest_metrics_event(request: MetricsEventRequest):
+    """
+    Best-effort ingestion for frontend product metrics events.
+    This endpoint is intentionally resilient: it should not break UX if storage is unavailable.
+    """
+    try:
+        event_name = (request.event_name or "").strip()
+        if not event_name:
+            raise HTTPException(status_code=400, detail="event_name is required")
+
+        now_iso = datetime.now(timezone.utc).isoformat()
+        event_id = request.event_id or str(uuid.uuid4())
+        correlation_id = request.correlation_id or event_id
+
+        event_doc = request.model_dump()
+        event_doc["event_name"] = event_name
+        event_doc["event_id"] = event_id
+        event_doc["correlation_id"] = correlation_id
+        event_doc["timestamp_server"] = now_iso
+        event_doc["received_at"] = now_iso
+        event_doc["received_at_dt"] = datetime.now(timezone.utc)
+
+        if db is not None:
+            try:
+                await db.metrics_events.insert_one(event_doc)
+            except Exception as db_exc:
+                logger.warning("Metrics event storage failed; accepted anyway: %s", db_exc)
+        else:
+            logger.info("Metrics event accepted without DB: %s", event_name)
+
+        return {
+            "status": "accepted",
+            "event_id": event_id,
+            "correlation_id": correlation_id,
+            "timestamp_server": now_iso
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Metrics ingestion error: %s", e)
+        raise HTTPException(status_code=500, detail="Failed to ingest metrics event")
+
+
+@api_router.get("/metrics/events/health")
+async def metrics_events_health():
+    """
+    Lightweight health/readiness endpoint for metrics ingestion.
+    Returns ingestion counts for the last 1h and 24h when DB is available.
+    """
+    now = datetime.now(timezone.utc)
+    hour_ago = now - timedelta(hours=1)
+    day_ago = now - timedelta(hours=24)
+
+    if db is None:
+        return {
+            "status": "ok",
+            "storage": "disabled",
+            "counts": {
+                "last_1h": 0,
+                "last_24h": 0
+            },
+            "timestamp_server": now.isoformat()
+        }
+
+    try:
+        col = db.metrics_events
+        count_1h = await col.count_documents({"received_at_dt": {"$gte": hour_ago}})
+        count_24h = await col.count_documents({"received_at_dt": {"$gte": day_ago}})
+        return {
+            "status": "ok",
+            "storage": "mongo",
+            "counts": {
+                "last_1h": count_1h,
+                "last_24h": count_24h
+            },
+            "timestamp_server": now.isoformat()
+        }
+    except Exception as e:
+        logger.warning("Metrics health query failed: %s", e)
+        return {
+            "status": "degraded",
+            "storage": "mongo",
+            "counts": {
+                "last_1h": None,
+                "last_24h": None
+            },
+            "timestamp_server": now.isoformat()
+        }
+
+
+# Registered after all concrete /api routes so GET/POST paths are not shadowed by this pattern.
+@api_router.options("/{full_path:path}")
+async def cors_preflight_handler(full_path: str):
+    """
+    Handle CORS preflight requests explicitly so that Cloud Run never returns 404
+    for OPTIONS on /api/... paths (which would cause browsers to block requests).
+    The CORSMiddleware will attach the appropriate CORS headers.
+    """
+    return Response(status_code=204)
+
+
 # Include the router in the main app
 app.include_router(api_router)
 
@@ -904,6 +1009,16 @@ async def startup_services():
         logger.info("Report scheduler started")
     except Exception as exc:
         logger.warning("Report scheduler could not start: %s", exc)
+
+    if db is not None:
+        try:
+            await db.metrics_events.create_index(
+                [("received_at_dt", -1)],
+                name="idx_metrics_received_at_dt_desc"
+            )
+            logger.info("Metrics index ensured: idx_metrics_received_at_dt_desc")
+        except Exception as exc:
+            logger.warning("Metrics index ensure failed: %s", exc)
 
 
 @app.on_event("shutdown")

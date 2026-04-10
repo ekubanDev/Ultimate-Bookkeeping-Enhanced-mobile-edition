@@ -273,14 +273,19 @@ class AIChatService {
             const cat = (e.category || '').toLowerCase();
             return type !== 'liability_payment' && cat !== 'debt payment' && cat !== 'loan repayment';
         });
-        const debtPayments = expenses.filter(e => {
+        const debtPaymentsFromExpenses = expenses.filter(e => {
             const type = (e.expenseType || '').toLowerCase();
             const cat = (e.category || '').toLowerCase();
             return type === 'liability_payment' || cat === 'debt payment' || cat === 'loan repayment';
         });
+        const debtFromTx = (s.allLiabilityPayments || []).reduce(
+            (sum, p) => sum + (parseFloat(p.amount) || 0),
+            0
+        );
         const totalRevenue = sales.reduce((sum, sl) => sum + (sl.quantity || 0) * (sl.price || 0), 0);
         const totalExpenses = operatingExpenses.reduce((sum, e) => sum + (e.amount || 0), 0);
-        const totalDebtPayments = debtPayments.reduce((sum, e) => sum + (e.amount || 0), 0);
+        const totalDebtPayments =
+            debtFromTx + debtPaymentsFromExpenses.reduce((sum, e) => sum + (e.amount || 0), 0);
         const lowStock = products.filter(p => (p.quantity || 0) <= (p.minStock || 10));
 
         return {

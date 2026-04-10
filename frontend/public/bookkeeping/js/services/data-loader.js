@@ -37,12 +37,6 @@ async function fetchCollectionRows(colRef, label = 'collection') {
     return rows;
 }
 
-function isDebtPaymentExpense(expense) {
-    const type = String(expense?.expenseType || '').toLowerCase();
-    const cat = String(expense?.category || '').toLowerCase();
-    return type === 'liability_payment' || cat === 'debt payment' || cat === 'loan repayment';
-}
-
 /**
  * Stock value for Outlets Management: canonical data lives under
  * users/{ownerUid}/outlets/{outletId}/outlet_inventory (POS, transfers, consignment confirm).
@@ -284,9 +278,7 @@ class DataLoaderService {
                             });
                         }
                     }
-
-                    // Keep debt principal repayments out of operating expenses.
-                    state.allExpenses = state.allExpenses.filter((e) => !isDebtPaymentExpense(e));
+                    
                     return state.allExpenses;
                 } catch (error) {
                     console.error('Load expenses error:', error);
@@ -737,6 +729,27 @@ class DataLoaderService {
                 }
             }
 
+            async loadLiabilityPayments() {
+                if (!state.currentUser) return;
+                try {
+                    state.allLiabilityPayments = [];
+                    const snap = await getDocs(
+                        query(
+                            collection(db, 'payment_transactions'),
+                            where('type', '==', 'liability_payment')
+                        )
+                    );
+                    snap.forEach((docSnap) => {
+                        state.allLiabilityPayments.push({ id: docSnap.id, ...docSnap.data() });
+                    });
+                    state.allLiabilityPayments.sort(
+                        (a, b) => (b.paymentDate || '').localeCompare(a.paymentDate || '')
+                    );
+                } catch (err) {
+                    console.error('Load liability payments error:', err);
+                }
+            }
+
             async loadAll() {
                 console.log('╔════════════════════════════════════════╗');
                 console.log('║        LOADING ALL DATA (FIXED)        ║');
@@ -790,6 +803,7 @@ class DataLoaderService {
                             this.loadExpenses(),
                             this.loadCustomers(),
                             this.loadLiabilities(),
+                            this.loadLiabilityPayments(),
                             this.loadSuppliers(),
                             this.loadPurchaseOrders()
                         ]);
@@ -811,6 +825,7 @@ class DataLoaderService {
                             this.loadCustomers(),
                             this.loadOutlets(),
                             this.loadLiabilities(),
+                            this.loadLiabilityPayments(),
                             this.loadSuppliers(),
                             this.loadPurchaseOrders()
                         ]);

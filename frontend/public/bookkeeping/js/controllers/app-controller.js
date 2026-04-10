@@ -28,6 +28,7 @@ import { Utils } from '../utils/utils.js';
 import { firebaseService } from '../services/firebase-service.js';
 import { dataLoader } from '../services/data-loader.js';
 import ActivityLogger from '../services/activity-logger.js';
+import { metricsService } from '../services/metrics-service.js';
 
 class AppController {
             constructor() {
@@ -1246,6 +1247,11 @@ class AppController {
                         document.getElementById('connection-status').textContent = 'Connected';
                         
                         await firebaseService.ensureUserData();
+                        
+                        
+                        //this.renderDashboard();
+                        this.setupRealtimeListeners();
+
                         // Load user role
                         const roleData = await firebaseService.getUserRole();
                         state.userRole = roleData.role;
@@ -1263,8 +1269,6 @@ class AppController {
                         this.showAppUI();
                         if (window.enhancedDashboard) window.enhancedDashboard.state = state;
                         await dataLoader.loadAll();
-                        // Bind realtime listeners after role + outlet context are loaded.
-                        this.setupRealtimeListeners();
                         await this.loadSettings();
                         // Apply role-based restrictions
                         this.applyRoleBasedUI();
@@ -1399,6 +1403,12 @@ class AppController {
                 if (state.userRole === 'outlet_manager') {
                     const restricted = this.getOutletManagerRestrictedSections();
                     if (restricted.includes(sectionName)) {
+                        metricsService.emit('access_denied', {
+                            resource: 'section',
+                            resource_name: sectionName,
+                            required_role: 'admin',
+                            actor_role: state.userRole || 'unknown'
+                        });
                         Utils.showToast('Access restricted to administrators', 'warning');
                         sectionName = 'dashboard';
                     }
@@ -2058,19 +2068,6 @@ class AppController {
                             this._refreshCurrentSectionIfDirty();
                         });
                     }));
-                    // Admin can view outlet-scoped expenses too; subscribe so Expenses refreshes immediately.
-                    (state.allOutlets || []).forEach((outlet) => {
-                        if (!outlet?.id) return;
-                        this._realtimeUnsubs.push(onSnapshot(
-                            firebaseService.getOutletSubCollection(outlet.id, 'outlet_expenses'),
-                            () => {
-                                dataLoader.loadExpenses().then(() => {
-                                    this.markSectionsDirty(['expenses', 'dashboard', 'analytics']);
-                                    this._refreshCurrentSectionIfDirty();
-                                });
-                            }
-                        ));
-                    });
                 }
 
                 this._realtimeUnsubs.push(onSnapshot(firebaseService.getUserCollection('customers'), () => {
@@ -3582,6 +3579,16 @@ class AppController {
                         amount: parseFloat(document.getElementById('expense-amount').value),
                         createdAt: new Date().toISOString()
                     };
+
+                    const catLower = String(expenseData.category || '').toLowerCase();
+                    if (catLower === 'debt payment' || catLower === 'loan repayment') {
+                        Utils.showToast(
+                            'Debt and loan repayments are not saved as expenses. Record them under Liabilities → Record payment.',
+                            'warning'
+                        );
+                        Utils.hideSpinner();
+                        return;
+                    }
                     
                     // Determine where to save based on user role and selection
                     if (state.userRole === 'outlet_manager') {
@@ -3895,6 +3902,10 @@ class AppController {
             async handleRecordLiabilityPayment(e) {
                 e.preventDefault();
                 Utils.showSpinner();
+                const flowStartedAt = Date.now();
+                const flowCorrelationId = (typeof crypto !== 'undefined' && crypto.randomUUID)
+                    ? crypto.randomUUID()
+                    : `flow_${Date.now()}`;
                 
                 try {
                     const liabilityId = document.getElementById('liability-payment-id').value;
@@ -3985,7 +3996,10 @@ class AppController {
                     });
                     console.log('✅ Payment transaction record queued');
                     
-                    // 4. Commit all changes (liability + supplier + payment transaction only)
+                    // Debt/liability principal repayments are balance-sheet / financing — not operating expenses.
+                    // Cash impact is tracked via payment_transactions (type: liability_payment) only.
+                    
+                    // Commit all changes
                     console.log('\n=== COMMITTING BATCH ===');
                     await batch.commit();
                     console.log('✅✅✅ PAYMENT RECORDED SUCCESSFULLY! ✅✅✅');
@@ -3993,6 +4007,12 @@ class AppController {
                     await ActivityLogger.log('Payment Recorded', 
                         `Paid ${Utils.formatCurrency(paymentAmount)} to ${liability.creditor || liability.supplierName}`);
                     
+                    metricsService.emit('flow_completed', {
+                        flow_name: 'record_liability_payment',
+                        duration_ms: Date.now() - flowStartedAt,
+                        result: 'success'
+                    }, { correlationId: flowCorrelationId });
+
                     Utils.showToast(`Payment of ${Utils.formatCurrency(paymentAmount)} recorded successfully`, 'success');
                     document.getElementById('record-liability-payment-modal').style.display = 'none';
                     document.getElementById('record-liability-payment-form').reset();
@@ -4001,6 +4021,7 @@ class AppController {
                     await Promise.all([
                         dataLoader.loadLiabilities(),
                         dataLoader.loadSuppliers(),
+                        dataLoader.loadLiabilityPayments(),
                         dataLoader.loadExpenses()
                     ]);
                     
@@ -4008,6 +4029,18 @@ class AppController {
                     
                 } catch (error) {
                     console.error('❌ Record payment error:', error);
+                    metricsService.emit('write_failed', {
+                        entity: 'liability_payment',
+                        target_collection: 'payment_transactions',
+                        duration_ms: Date.now() - flowStartedAt,
+                        error_code: error?.code || 'unknown',
+                        error_message: error?.message || String(error)
+                    }, { correlationId: flowCorrelationId });
+                    metricsService.emit('flow_completed', {
+                        flow_name: 'record_liability_payment',
+                        duration_ms: Date.now() - flowStartedAt,
+                        result: 'blocked'
+                    }, { correlationId: flowCorrelationId });
                     Utils.showToast('Failed to record payment: ' + error.message, 'error');
                 } finally {
                     Utils.hideSpinner();
@@ -7853,6 +7886,19 @@ class AppController {
                         monthlyData[month].operating -= amount;
                     }
                 });
+
+                // Liability repayments recorded in payment_transactions (not expenses)
+                (state.allLiabilityPayments || []).forEach((p) => {
+                    const dateStr = p.paymentDate;
+                    if (!dateStr || String(dateStr).length < 7) return;
+                    const month = String(dateStr).slice(0, 7);
+                    const amt = parseFloat(p.amount) || 0;
+                    if (!amt) return;
+                    if (!monthlyData[month]) {
+                        monthlyData[month] = { operating: 0, investing: 0, financing: 0 };
+                    }
+                    monthlyData[month].financing -= amt;
+                });
                 
                 // Process new liabilities as financing cash inflow (principal received)
                 if (state.allLiabilities && state.allLiabilities.length > 0) {
@@ -10319,6 +10365,10 @@ class AppController {
             async handleGenerateSettlement(e) {
                 e.preventDefault();
                 Utils.showSpinner();
+                const flowStartedAt = Date.now();
+                const flowCorrelationId = (typeof crypto !== 'undefined' && crypto.randomUUID)
+                    ? crypto.randomUUID()
+                    : `flow_${Date.now()}`;
                 
                 try {
                     const outletId = document.getElementById('settlement-outlet').value;
@@ -10363,6 +10413,12 @@ class AppController {
                     await setDoc(existingSettlementRef, settlement);
                     
                     await ActivityLogger.log('Settlement Generated', `Generated settlement for ${outlet.name} - ${period}`);
+
+                    metricsService.emit('flow_completed', {
+                        flow_name: 'generate_settlement',
+                        duration_ms: Date.now() - flowStartedAt,
+                        result: 'success'
+                    }, { correlationId: flowCorrelationId });
                     
                     Utils.showToast('Settlement generated successfully', 'success');
                     document.getElementById('generate-settlement-modal').style.display = 'none';
@@ -10371,6 +10427,18 @@ class AppController {
                     this.viewSettlementDetails(outletId, period);
                     
                 } catch (error) {
+                    metricsService.emit('write_failed', {
+                        entity: 'settlement',
+                        target_collection: 'users/{uid}/outlets/{outletId}/settlements',
+                        duration_ms: Date.now() - flowStartedAt,
+                        error_code: error?.code || 'unknown',
+                        error_message: error?.message || String(error)
+                    }, { correlationId: flowCorrelationId });
+                    metricsService.emit('flow_completed', {
+                        flow_name: 'generate_settlement',
+                        duration_ms: Date.now() - flowStartedAt,
+                        result: 'blocked'
+                    }, { correlationId: flowCorrelationId });
                     Utils.showToast('Failed to generate settlement: ' + error.message, 'error');
                 } finally {
                     Utils.hideSpinner();

@@ -42,15 +42,30 @@ import { EnhancedDashboard } from './services/enhanced-dashboard.js';
 
 // Import AI Chat
 import aiChatService from './services/ai-chat.js';
+import { metricsService } from './services/metrics-service.js';
 
 // ==================== GLOBAL ERROR HANDLERS ====================
 window.addEventListener('error', (event) => {
     console.error('Global error:', event.error);
+    metricsService.emit('runtime_error', {
+        surface: 'frontend',
+        section: window.appController?._currentSection || 'other',
+        error_name: event.error?.name || 'Error',
+        error_message: event.error?.message || String(event.message || ''),
+        stack_hash: (event.error?.stack || '').slice(0, 240)
+    });
     Utils.showToast('An unexpected error occurred', 'error');
 });
 
 window.addEventListener('unhandledrejection', (event) => {
     console.error('Unhandled promise rejection:', event.reason);
+    metricsService.emit('runtime_error', {
+        surface: 'frontend',
+        section: window.appController?._currentSection || 'other',
+        error_name: 'UnhandledPromiseRejection',
+        error_message: String(event.reason?.message || event.reason || ''),
+        stack_hash: String(event.reason?.stack || '').slice(0, 240)
+    });
     Utils.showToast('An unexpected error occurred', 'error');
 });
 
@@ -137,6 +152,7 @@ async function initializeApp() {
         window.stockTransfer = stockTransfer;
         window.pdfExport = pdfExport;
         window.barcodeScanner = barcodeScanner;
+        window.metricsService = metricsService;
 
         const app = new AppController();
         window.appController = app;
