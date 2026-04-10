@@ -1164,6 +1164,15 @@
     <!-- Mobile Navigation Script -->
     <script src="js/utils/mobile-navigation.js"></script>
     
+    <!--
+      Backend / GCP projects
+      - Firebase Hosting rewrites /api/** to Cloud Run only in the GCP project linked to this Firebase app.
+      - If you deploy Cloud Run with gcloud --project OTHER, that service is not the rewrite target; either
+        deploy bookkeeping-api to the Firebase-linked project, or force web to call Run directly by setting
+        window.BACKEND_URL below to your full https://….run.app URL (CORS on the API must allow this origin).
+      - Firebase Auth still issues tokens for THIS Firebase project; on Cloud Run set env FIREBASE_PROJECT_ID
+        to this Firebase project id (e.g. bookkeeping-211e6), not the Cloud Run host project.
+    -->
     <!-- Backend configuration for web vs. native (Capacitor) -->
     <script>
         (function () {
@@ -1173,11 +1182,11 @@
                 window.Capacitor.isNativePlatform() === true;
 
             if (isNative) {
-                // Point mobile (Capacitor) builds at the Cloud Run backend.
-                // Replace with your actual Cloud Run HTTPS URL.
+                // Point mobile (Capacitor) builds at the Cloud Run backend (any GCP project).
                 window.BACKEND_URL = window.BACKEND_URL || 'https://bookkeeping-api-572507957762.us-central1.run.app';
             } else {
-                // Web (Firebase Hosting) keeps BACKEND_URL empty so /api/** rewrites work.
+                // Web: empty = same-origin /api → Firebase Hosting rewrite. If Run lives in another GCP project,
+                // set a full Run URL here instead of ''.
                 window.BACKEND_URL = window.BACKEND_URL || '';
             }
         })();

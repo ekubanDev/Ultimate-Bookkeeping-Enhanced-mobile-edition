@@ -793,12 +793,20 @@ export class EnhancedDashboard {
         if (refreshBtn) refreshBtn.classList.add('loading');
         
         try {
+            const { start, end } = this.getDateRange(period);
+            const inPeriod = (dateVal) => {
+                const d = (dateVal || '').toString().slice(0, 10);
+                return d >= start && d <= end;
+            };
+            const salesForInsights = (this.state?.allSales || []).filter((s) => inPeriod(s.date));
+            const expensesForInsights = (this.state?.allExpenses || []).filter((e) => inPeriod(e.date));
+
             const response = await fetch(`${BACKEND_URL}/api/ai/insights`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    sales_data: this.state?.allSales || [],
-                    expenses_data: this.state?.allExpenses || [],
+                    sales_data: salesForInsights,
+                    expenses_data: expensesForInsights,
                     products_data: this.state?.allProducts || [],
                     period: period,
                     analysis_type: 'general'

@@ -1,4 +1,4 @@
-from fastapi import FastAPI, APIRouter, HTTPException, Response
+from fastapi import FastAPI, APIRouter, HTTPException, Response, Header
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -14,6 +14,14 @@ import math
 
 import json
 from openai import AsyncOpenAI
+
+from ai_chat_tools import compute_business_snapshot, snapshot_json_for_prompt
+from firebase_auth import (
+    ai_chat_auth_enforced,
+    check_ai_chat_rate_limit,
+    ensure_firebase_admin_app,
+    verify_bearer_id_token,
+)
 
 try:
     from emergentintegrations.llm.chat import LlmChat, UserMessage
@@ -45,6 +53,132 @@ async def call_llm(api_key: str, system_message: str, prompt: str) -> str:
         max_tokens=1000
     )
     return response.choices[0].message.content
+
+
+def _sanitize_chat_datasets(raw: Any) -> Dict[str, Any]:
+    if not isinstance(raw, dict):
+        return {}
+    out: Dict[str, Any] = {}
+    limits = {"products": 2000, "sales": 3500, "purchase_orders": 600}
+    for key, lim in limits.items():
+        v = raw.get(key)
+        if isinstance(v, list):
+            out[key] = v[:lim]
+    return out
+
+
+CHAT_TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "get_business_snapshot",
+            "description": (
+                "Returns factual aggregates from the user's loaded bookkeeping data: low stock, "
+                "restock priorities (by recent revenue), top sellers in the last 90 days, slow movers, "
+                "and last purchase-order receive dates per product. Call this before answering questions "
+                "about inventory, restocking, or product performance."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": False,
+            },
+        },
+    }
+]
+
+
+def _sanitize_chat_history(raw: Any) -> List[Dict[str, str]]:
+    if not isinstance(raw, list):
+        return []
+    out: List[Dict[str, str]] = []
+    for item in raw[-12:]:
+        if not isinstance(item, dict):
+            continue
+        role = item.get("role")
+        if role not in ("user", "assistant"):
+            continue
+        content = item.get("content")
+        if not isinstance(content, str):
+            content = str(content) if content is not None else ""
+        content = content.strip()
+        if not content:
+            continue
+        out.append({"role": role, "content": content[:4000]})
+    return out
+
+
+async def _ai_chat_with_openai_tools(
+    api_key: str,
+    system_message: str,
+    user_question: str,
+    snapshot_json: str,
+    history: Optional[List[Dict[str, str]]] = None,
+) -> str:
+    """One tool (get_business_snapshot) backed by precomputed client data; native OpenAI tool loop."""
+    model = os.environ.get("AI_CHAT_MODEL", "gpt-4o")
+    client = AsyncOpenAI(api_key=api_key)
+    messages: List[Dict[str, Any]] = [{"role": "system", "content": system_message}]
+    for turn in history or []:
+        messages.append({"role": turn["role"], "content": turn["content"]})
+    messages.append(
+        {
+            "role": "user",
+            "content": (
+                f"{user_question}\n\n"
+                "For factual questions about sales, inventory, restocking, or product performance, "
+                "call get_business_snapshot first and base numeric claims only on that result."
+            ),
+        }
+    )
+    max_rounds = 4
+    for _ in range(max_rounds):
+        response = await client.chat.completions.create(
+            model=model,
+            messages=messages,
+            tools=CHAT_TOOLS,
+            tool_choice="auto",
+            temperature=0.5,
+            max_tokens=1800,
+        )
+        msg = response.choices[0].message
+        if not msg.tool_calls:
+            return (msg.content or "").strip() or "I could not generate a response."
+
+        messages.append(
+            {
+                "role": "assistant",
+                "content": msg.content,
+                "tool_calls": [
+                    {
+                        "id": tc.id,
+                        "type": "function",
+                        "function": {"name": tc.function.name, "arguments": tc.function.arguments or "{}"},
+                    }
+                    for tc in msg.tool_calls
+                ],
+            }
+        )
+        for tc in msg.tool_calls:
+            if tc.function.name == "get_business_snapshot":
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tc.id,
+                        "content": snapshot_json,
+                    }
+                )
+            else:
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tc.id,
+                        "content": json.dumps({"error": "unknown_tool", "name": tc.function.name}),
+                    }
+                )
+
+    return "The assistant took too many steps. Please try a simpler question."
+
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -160,11 +294,60 @@ async def get_status_checks():
             check['timestamp'] = datetime.fromisoformat(check['timestamp'])
     return status_checks
 
+def _insights_sale_line_revenue(s: Dict[str, Any]) -> float:
+    """Align with frontend enhanced-dashboard calculateRevenue (discount + tax)."""
+    try:
+        qty = float(s.get("quantity", 0) or 0)
+        price = float(s.get("price", 0) or 0)
+        disc = float(s.get("discount", 0) or 0)
+        tax = float(s.get("tax", 0) or 0)
+        subtotal = qty * price * (1.0 - disc / 100.0)
+        return subtotal * (1.0 + tax / 100.0)
+    except (TypeError, ValueError):
+        t = s.get("total")
+        if t is not None:
+            try:
+                return float(t)
+            except (TypeError, ValueError):
+                pass
+        return 0.0
+
+
+def _insights_compute_cogs(sales: List[Dict[str, Any]], products: List[Dict[str, Any]]) -> float:
+    """Align with frontend enhanced-dashboard calculateCOGS (product cost × qty)."""
+    by_name: Dict[str, float] = {}
+    for p in products:
+        n = (p.get("name") or "").strip()
+        if not n:
+            continue
+        try:
+            by_name[n] = float(p.get("cost", 0) or 0)
+        except (TypeError, ValueError):
+            by_name[n] = 0.0
+    total = 0.0
+    for s in sales:
+        name = (s.get("product") or "").strip()
+        cost = by_name.get(name)
+        if cost is None:
+            try:
+                cost = float(s.get("cost", 0) or 0)
+            except (TypeError, ValueError):
+                cost = 0.0
+        try:
+            qty = float(s.get("quantity", 0) or 0)
+        except (TypeError, ValueError):
+            qty = 0.0
+        total += qty * cost
+    return total
+
+
 @api_router.post("/ai/insights", response_model=AIInsightsResponse)
 async def get_ai_insights(request: AIInsightsRequest):
     """Generate AI-powered business insights using GPT-5.2"""
     try:
-        total_sales = sum(s.get('total', s.get('quantity', 0) * s.get('price', 0)) for s in request.sales_data)
+        total_revenue = sum(_insights_sale_line_revenue(s) for s in request.sales_data)
+        total_cogs = _insights_compute_cogs(request.sales_data, request.products_data)
+        gross_profit = total_revenue - total_cogs
         total_products = len(request.products_data)
         low_stock_count = sum(1 for p in request.products_data if p.get('quantity', 0) <= p.get('minStock', 10))
 
@@ -176,8 +359,8 @@ async def get_ai_insights(request: AIInsightsRequest):
         operating_expenses = [e for e in request.expenses_data if not _is_debt_payment(e)]
         debt_payments = [e for e in request.expenses_data if _is_debt_payment(e)]
 
-        total_expenses = sum(e.get('amount', 0) for e in operating_expenses)
-        total_debt_payments = sum(e.get('amount', 0) for e in debt_payments)
+        total_expenses = sum(float(e.get('amount', 0) or 0) for e in operating_expenses)
+        total_debt_payments = sum(float(e.get('amount', 0) or 0) for e in debt_payments)
 
         product_sales = {}
         for sale in request.sales_data:
@@ -189,26 +372,40 @@ async def get_ai_insights(request: AIInsightsRequest):
         expense_categories = {}
         for exp in operating_expenses:
             cat = exp.get('category', 'Other')
-            expense_categories[cat] = expense_categories.get(cat, 0) + exp.get('amount', 0)
+            expense_categories[cat] = expense_categories.get(cat, 0) + float(exp.get('amount', 0) or 0)
 
-        net_profit = total_sales - total_expenses
-        margin = ((net_profit) / total_sales * 100) if total_sales > 0 else 0
+        net_profit = gross_profit - total_expenses
+        gross_margin_pct = (gross_profit / total_revenue * 100) if total_revenue > 0 else 0
+        net_margin_pct = (net_profit / total_revenue * 100) if total_revenue > 0 else 0
 
         api_key = os.environ.get('EMERGENT_LLM_KEY')
 
         if api_key:
-            prompt = f"""You are a business analytics expert. Analyze this bookkeeping data and provide actionable insights. All monetary values are in Ghana Cedis (GHS). Always use the ₵ symbol for currency, never $.
+            prompt = f"""Analyze this bookkeeping data and provide actionable insights. All monetary values are in Ghana Cedis (GHS). Always use the ₵ symbol, never $.
+
+The rows below match the **same period** the dashboard sent (filter: {request.period}). Use only these numbers for any monetary claims.
+
+FINANCIAL DEFINITIONS (must follow exactly):
+- **Total Revenue** = recorded sales (after line discount/tax), not profit.
+- **COGS** = cost of goods sold, estimated as quantity sold × product unit cost from inventory (same approach as the dashboard).
+- **Gross Profit** = Total Revenue − COGS.
+- **Operating Expenses** = recorded operating expenses only (debt repayments listed separately).
+- **Net Profit** = Gross Profit − Operating Expenses. This is the true “bottom line” for this view — **not** the same as Total Revenue.
+- **Gross margin %** = Gross Profit ÷ Total Revenue. **Net margin %** = Net Profit ÷ Total Revenue.
 
 BUSINESS DATA SUMMARY ({request.period}):
-- Total Revenue: ₵{total_sales:,.2f}
+- Total Revenue: ₵{total_revenue:,.2f}
+- COGS (from inventory costs × units sold): ₵{total_cogs:,.2f}
+- Gross Profit: ₵{gross_profit:,.2f}
+- Gross margin: {gross_margin_pct:.1f}%
 - Operating Expenses: ₵{total_expenses:,.2f}
-- Net Profit: ₵{net_profit:,.2f}
-- Profit Margin: {margin:.1f}%
-- Debt/Liability Payments (not an expense, reduces liabilities): ₵{total_debt_payments:,.2f}
+- Net Profit (Gross Profit − Operating Expenses): ₵{net_profit:,.2f}
+- Net margin on revenue: {net_margin_pct:.1f}%
+- Debt/Liability Payments (not operating expense): ₵{total_debt_payments:,.2f}
 - Total Products: {total_products}
 - Low Stock Items: {low_stock_count}
 
-TOP SELLING PRODUCTS:
+TOP SELLING PRODUCTS (by units):
 {chr(10).join([f"- {p[0]}: {p[1]} units" for p in top_products]) if top_products else "- No sales data"}
 
 EXPENSE BREAKDOWN:
@@ -217,7 +414,7 @@ EXPENSE BREAKDOWN:
 Analysis Type: {request.analysis_type}
 
 Provide:
-1. A brief executive summary (2-3 sentences)
+1. A brief executive summary (2-3 sentences): mention **Total Revenue**, **Gross Profit** or **COGS** if relevant, and **Net Profit** as distinct figures — never describe revenue as net profit.
 2. 3-5 specific, actionable recommendations
 3. Any urgent alerts or warnings
 4. Revenue forecast trend (up/down/stable)
@@ -226,8 +423,12 @@ Format your response as JSON with keys: summary, recommendations (array), alerts
 
             response = await call_llm(
                 api_key=api_key,
-                system_message="You are a professional business analyst specializing in retail and inventory management. Provide concise, data-driven insights. This business operates in Ghana. Always use the Ghana Cedi symbol ₵ (GHS) for all monetary values, never $.",
-                prompt=prompt
+                system_message=(
+                    "You are a professional business analyst for retail and inventory. This business operates in Ghana; use ₵ (GHS) only, never $. "
+                    "The payload uses dashboard-aligned math: net profit subtracts COGS (from product costs) and operating expenses. "
+                    "Never equate Total Revenue with Net Profit."
+                ),
+                prompt=prompt,
             )
 
             try:
@@ -257,11 +458,11 @@ Format your response as JSON with keys: summary, recommendations (array), alerts
 
         if low_stock_count > 0:
             alerts.append(f"{low_stock_count} product(s) are at or below minimum stock levels")
-        if margin < 20:
-            alerts.append(f"Profit margin is low at {margin:.1f}% — consider reviewing pricing or cutting expenses")
-            recommendations.append("Review product pricing to improve margins")
+        if total_revenue > 0 and gross_margin_pct < 20:
+            alerts.append(f"Gross margin is low at {gross_margin_pct:.1f}% — review pricing or supplier costs")
+            recommendations.append("Review product pricing and COGS to improve gross margin")
         if net_profit < 0:
-            alerts.append("Business is operating at a loss this period")
+            alerts.append("Business is operating at a net loss this period (after COGS and operating expenses)")
         if top_products:
             recommendations.append(f"Focus on top seller '{top_products[0][0]}' — consider increasing stock and promotions")
         if expense_categories:
@@ -270,9 +471,13 @@ Format your response as JSON with keys: summary, recommendations (array), alerts
         recommendations.append("Maintain consistent stock levels on high-demand items")
         recommendations.append("Track daily sales trends to identify seasonal patterns")
 
-        trend = "up" if net_profit > 0 and margin > 15 else "down" if net_profit < 0 else "stable"
+        trend = "up" if net_profit > 0 and net_margin_pct > 10 else "down" if net_profit < 0 else "stable"
         debt_note = f" Debt payments of ₵{total_debt_payments:,.2f} reduced liabilities (not counted as expense)." if total_debt_payments > 0 else ""
-        summary = f"Revenue of ₵{total_sales:,.2f} with operating expenses of ₵{total_expenses:,.2f} yields a net {'profit' if net_profit >= 0 else 'loss'} of ₵{abs(net_profit):,.2f} ({margin:.1f}% margin).{debt_note} Tracking {total_products} products with {low_stock_count} items needing restock."
+        summary = (
+            f"Revenue ₵{total_revenue:,.2f}, COGS ₵{total_cogs:,.2f}, gross profit ₵{gross_profit:,.2f} ({gross_margin_pct:.1f}% gross margin). "
+            f"After operating expenses ₵{total_expenses:,.2f}, net {'profit' if net_profit >= 0 else 'loss'} ₵{abs(net_profit):,.2f} ({net_margin_pct:.1f}% net margin).{debt_note} "
+            f"{total_products} products; {low_stock_count} low-stock SKUs."
+        )
 
         return AIInsightsResponse(
             insights=summary,
@@ -607,30 +812,95 @@ Provide 2-3 sentences of actionable analysis. Focus on what the owner should do,
 
 
 @api_router.post("/ai/chat")
-async def ai_chat(data: Dict[str, Any]):
-    """General AI chat for business questions"""
+async def ai_chat(data: Dict[str, Any], authorization: Optional[str] = Header(None)):
+    """General AI chat for business questions; uses tool-style snapshot when datasets are sent."""
     try:
-        question = data.get('question', '')
-        context = data.get('context', {})
-        api_key = os.environ.get('EMERGENT_LLM_KEY')
+        question = (data.get("question") or "").strip()
+        context = data.get("context", {}) if isinstance(data.get("context"), dict) else {}
+        datasets = _sanitize_chat_datasets(data.get("datasets"))
+        history = _sanitize_chat_history(data.get("history"))
+        api_key = os.environ.get("EMERGENT_LLM_KEY")
+
+        if not question:
+            raise HTTPException(status_code=400, detail="question is required")
+
+        if ai_chat_auth_enforced():
+            if not ensure_firebase_admin_app():
+                raise HTTPException(
+                    status_code=503,
+                    detail="AI chat authentication is required but Firebase Admin is not configured.",
+                )
+            try:
+                claims = verify_bearer_id_token(authorization)
+                uid = claims.get("uid") or claims.get("sub") or ""
+                if uid:
+                    check_ai_chat_rate_limit(uid)
+            except ValueError:
+                raise HTTPException(
+                    status_code=401,
+                    detail="Authentication required. Sign in and retry, or pass a valid Firebase ID token.",
+                )
+            except PermissionError:
+                raise HTTPException(status_code=429, detail="Too many AI chat requests. Try again shortly.")
+            except Exception as auth_exc:
+                logger.warning("Firebase token verification failed: %s", auth_exc)
+                raise HTTPException(status_code=401, detail="Invalid or expired authentication token.")
 
         if not api_key:
             return {"response": "AI chat is not configured. Please set the EMERGENT_LLM_KEY environment variable."}
 
-        prompt = f"""Business Question: {question}
+        snapshot = compute_business_snapshot(datasets)
+        snapshot_json = snapshot_json_for_prompt(snapshot)
 
-Business Context:
-{chr(10).join([f"- {k}: {v}" for k, v in context.items()]) if context else "No additional context provided."}
-
-Provide a helpful, concise response focused on actionable business advice."""
-
-        response = await call_llm(
-            api_key=api_key,
-            system_message="You are a helpful business advisor specializing in retail, inventory management, and bookkeeping. This business operates in Ghana. Always use the Ghana Cedi symbol ₵ (GHS) for all monetary values, never $.",
-            prompt=prompt
+        system_message = (
+            "You are a helpful business advisor specializing in retail, inventory management, and bookkeeping. "
+            "This business operates in Ghana. Always use the Ghana Cedi symbol ₵ (GHS) for all monetary values, never $. "
+            "When get_business_snapshot results are provided, treat them as the source of truth for numbers; do not invent figures."
         )
-        return {"response": response}
 
+        context_block = (
+            "\n".join([f"- {k}: {v}" for k, v in context.items()])
+            if context
+            else "No additional summary context provided."
+        )
+
+        history_block = ""
+        if history:
+            history_block = (
+                "Prior conversation (same session):\n"
+                + "\n".join(f"{t['role'].upper()}: {t['content']}" for t in history)
+                + "\n\n"
+            )
+
+        if HAS_EMERGENT:
+            prompt = f"""{history_block}Business Question: {question}
+
+High-level summary (may omit detail):
+{context_block}
+
+Structured business metrics (from client-loaded data; use for factual answers):
+{snapshot_json}
+
+Provide a helpful, concise response focused on actionable business advice. For inventory and restock questions, cite specific products from the structured metrics when relevant."""
+
+            response = await call_llm(
+                api_key=api_key,
+                system_message=system_message,
+                prompt=prompt,
+            )
+            return {"response": response, "agent_mode": "snapshot_prompt", "snapshot_meta": snapshot.get("computed_at")}
+
+        response = await _ai_chat_with_openai_tools(
+            api_key=api_key,
+            system_message=system_message,
+            user_question=f"Summary context:\n{context_block}\n\nQuestion:\n{question}",
+            snapshot_json=snapshot_json,
+            history=history,
+        )
+        return {"response": response, "agent_mode": "openai_tools", "snapshot_meta": snapshot.get("computed_at")}
+
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"AI chat error: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Chat failed: {str(e)}")

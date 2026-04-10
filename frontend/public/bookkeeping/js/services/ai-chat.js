@@ -2,6 +2,8 @@
  * AI Chat Service — floating chat window for business Q&A
  */
 
+import { auth } from '../config/firebase.js';
+
 const BACKEND_URL = window.BACKEND_URL || '';
 
 class AIChatService {
@@ -80,7 +82,7 @@ class AIChatService {
                     </div>
                     <div class="ai-chat-context">
                         <i class="fas fa-database"></i>
-                        <span>Using your live business data for context</span>
+                        <span>Answers use structured metrics from your loaded sales, inventory, and purchase orders</span>
                     </div>
                 </div>
             </div>
@@ -263,6 +265,54 @@ class AIChatService {
         textarea.style.height = Math.min(textarea.scrollHeight, 100) + 'px';
     }
 
+    /**
+     * Slim records for server-side tool aggregates (size-capped on the server too).
+     */
+    getAgentDatasets() {
+        const s = this.state || {};
+        const cap = (arr, n) => (Array.isArray(arr) ? arr.slice(0, n) : []);
+
+        const products = cap(s.allProducts, 2000).map((p) => ({
+            id: p.id,
+            name: p.name,
+            quantity: p.quantity,
+            minStock: p.minStock,
+            price: p.price,
+            cost: p.cost,
+            category: p.category,
+            lastSold: p.lastSold,
+            updatedAt: p.updatedAt,
+            lastRestockedAt: p.lastRestockedAt,
+            lastRestockSource: p.lastRestockSource,
+        }));
+
+        const sales = cap(s.allSales, 3500).map((sl) => ({
+            date: sl.date,
+            createdAt: sl.createdAt,
+            product: sl.product,
+            productId: sl.productId,
+            quantity: sl.quantity,
+            price: sl.price,
+            discount: sl.discount,
+        }));
+
+        const purchase_orders = cap(s.allPurchaseOrders || [], 600).map((po) => ({
+            id: po.id,
+            status: po.status,
+            receivedDate: po.receivedDate,
+            items: Array.isArray(po.items)
+                ? po.items.map((it) => ({
+                    productId: it.productId,
+                    productName: it.productName,
+                    quantity: it.quantity,
+                    receivedQuantity: it.receivedQuantity,
+                }))
+                : [],
+        }));
+
+        return { products, sales, purchase_orders };
+    }
+
     getBusinessContext() {
         const s = this.state || {};
         const products = s.allProducts || [];
@@ -311,20 +361,44 @@ class AIChatService {
 
         this.elements.welcome.style.display = 'none';
 
+        const history = this.messages.slice(-12).map((m) => ({
+            role: m.role,
+            content: m.text,
+        }));
+
         this.appendMessage('user', text);
         this.showTyping();
         this.isLoading = true;
 
         try {
+            const headers = { 'Content-Type': 'application/json' };
+            try {
+                const u = auth.currentUser;
+                if (u) {
+                    const token = await u.getIdToken();
+                    headers.Authorization = `Bearer ${token}`;
+                }
+            } catch (tokErr) {
+                console.warn('AI chat: ID token unavailable', tokErr);
+            }
+
             const response = await fetch(`${BACKEND_URL}/api/ai/chat`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers,
                 body: JSON.stringify({
                     question: text,
-                    context: this.getBusinessContext()
+                    context: this.getBusinessContext(),
+                    datasets: this.getAgentDatasets(),
+                    history,
                 })
             });
 
+            if (response.status === 401) {
+                throw new Error('Please sign in to use the AI assistant.');
+            }
+            if (response.status === 429) {
+                throw new Error('Too many AI requests. Please wait a moment and try again.');
+            }
             if (!response.ok) throw new Error(`Server error (${response.status})`);
 
             const data = await response.json();

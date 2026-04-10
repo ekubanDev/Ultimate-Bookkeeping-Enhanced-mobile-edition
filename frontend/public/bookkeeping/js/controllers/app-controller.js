@@ -693,6 +693,11 @@ class AppController {
                             
                             console.log(`\n📊 Summary: ${receivedItems.length} items to process (out of ${itemRows.length} ordered)`);
                             
+                            const restockIso = receiveDate
+                                ? new Date(`${receiveDate}T12:00:00.000Z`).toISOString()
+                                : new Date().toISOString();
+                            const restockSource = `po:${poId}`;
+
                             const batch = writeBatch(db);
                             let inventoryUpdates = 0;
                             let newProductsAdded = 0;
@@ -721,7 +726,9 @@ class AppController {
                                         barcode: '',
                                         createdBy: state.currentUser.uid,
                                         createdAt: serverTimestamp(),
-                                        updatedAt: serverTimestamp()
+                                        updatedAt: serverTimestamp(),
+                                        lastRestockedAt: restockIso,
+                                        lastRestockSource: restockSource,
                                     };
                                     
                                     console.log('  📝 Creating new product in /inventory');
@@ -756,7 +763,9 @@ class AppController {
                                         batch.update(productRef, {
                                             quantity: newQty,
                                             cost: newCost,
-                                            updatedAt: serverTimestamp()
+                                            updatedAt: serverTimestamp(),
+                                            lastRestockedAt: restockIso,
+                                            lastRestockSource: restockSource,
                                         });
                                         inventoryUpdates++;
                                         console.log('  ✅ Queued for update');
