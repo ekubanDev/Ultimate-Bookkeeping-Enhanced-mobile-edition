@@ -10,6 +10,7 @@ import {
     downloadPdfBlobInBrowser,
     PDF_SHARE_UNAVAILABLE,
 } from '../utils/native-pdf-save.js';
+import { isDebtPayment, getSaleTotal } from '../utils/accounting.js';
 
 class PDFExportService {
     constructor() {
@@ -21,23 +22,10 @@ class PDFExportService {
         return 'GHS ' + (parseFloat(amount) || 0).toFixed(2);
     }
 
-    isDebtPayment(e) {
-        const type = (e.expenseType || '').toLowerCase();
-        const cat = (e.category || '').toLowerCase();
-        return type === 'liability_payment' || cat === 'debt payment' || cat === 'loan repayment';
-    }
+    isDebtPayment(e) { return isDebtPayment(e); }
 
     /** Compute revenue for one sale: use s.total if valid, else derive from quantity/price/discount/tax. */
-    getSaleTotal(s) {
-        const explicit = parseFloat(s.total);
-        if (!Number.isNaN(explicit)) return explicit;
-        const qty = parseFloat(s.quantity) || 0;
-        const price = parseFloat(s.price) || 0;
-        const discount = parseFloat(s.discount) || 0;
-        const tax = parseFloat(s.tax) || 0;
-        const subtotal = qty * price;
-        const discounted = subtotal * (1 - discount / 100);
-        return discounted * (1 + tax / 100);
+    getSaleTotal(s) { return getSaleTotal(s);
     }
 
     /**

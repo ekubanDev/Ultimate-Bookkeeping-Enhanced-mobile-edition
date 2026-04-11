@@ -9,17 +9,14 @@ import { Utils } from '../utils/utils.js';
 import { state } from '../utils/state.js';
 import { db, collection, query, where, getDocs } from '../config/firebase.js';
 import { saveBlobWithNativeFallbacks } from '../utils/native-pdf-save.js';
+import { isDebtPayment } from '../utils/accounting.js';
 
 class ExportService {
     constructor() {
         this.initialized = false;
     }
 
-    isDebtPayment(expense) {
-        const type = String(expense?.expenseType || '').toLowerCase();
-        const category = String(expense?.category || '').toLowerCase();
-        return type === 'liability_payment' || category === 'debt payment' || category === 'loan repayment';
-    }
+    isDebtPayment(expense) { return isDebtPayment(expense); }
 
     // ==================== CSV EXPORT ====================
 

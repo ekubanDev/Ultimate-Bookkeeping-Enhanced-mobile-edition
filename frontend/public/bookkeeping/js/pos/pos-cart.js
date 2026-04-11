@@ -3,6 +3,7 @@ import { state } from '../utils/state.js';
 import { POSUI } from './pos-ui.js';
 import { POSCheckout } from './pos-checkout.js';
 import { POSData } from './pos-data.js';
+import { metricsService } from '../services/metrics-service.js';
 
 export const POSCart = {
     cart: [],
@@ -184,9 +185,19 @@ export const POSCart = {
     },
 
     async confirmSale(customerName) {
+        const flowStartedAt = Date.now();
+        const correlationId = (typeof crypto !== 'undefined' && crypto.randomUUID)
+            ? crypto.randomUUID()
+            : `flow_${Date.now()}`;
+
+        metricsService.emit('flow_started', {
+            flow_name: 'pos_checkout',
+            cart_items: this.cart.length
+        }, { correlationId });
+
         try {
             const modal = document.getElementById('checkout-modal');
-            
+
             // Prepare cart data
             let subtotal = 0;
             const items = this.cart.map(item => {
@@ -224,16 +235,27 @@ export const POSCart = {
             // Close modal
             modal.classList.remove('active');
 
-            // Show success
             POSUI.showNotification('Sale completed!', 'success');
 
-            // Reload products
+            metricsService.emit('flow_completed', {
+                flow_name: 'pos_checkout',
+                duration_ms: Date.now() - flowStartedAt,
+                result: 'success',
+                items_sold: this.cart.length
+            }, { correlationId });
+
             if (window.POSMain) {
                 await window.POSMain.loadData();
             }
 
         } catch (error) {
-            console.error('Sale error:', error);
+            console.error('[POSCart] confirmSale error:', error);
+            metricsService.emit('flow_completed', {
+                flow_name: 'pos_checkout',
+                duration_ms: Date.now() - flowStartedAt,
+                result: 'blocked',
+                error_message: error?.message || String(error)
+            }, { correlationId });
             POSUI.showNotification('Sale failed: ' + error.message, 'error');
         }
     },

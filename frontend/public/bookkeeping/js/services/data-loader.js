@@ -80,27 +80,20 @@ class DataLoaderService {
 
             async loadProducts() {
                 if (!state.currentUser) return;
-                
-                console.log('=== LOADING PRODUCTS ===');
-                console.log('User role:', state.userRole);
-                
+
                 try {
                     state.allProducts = [];
-                    //const outlet = state.allOutlets.find(o => o.id === state.assignedOutlet);
                     if (state.userRole === 'outlet_manager' && state.assignedOutlet) {
                         // OUTLET MANAGER: Load from outlet inventory
                         const outlet = state.allOutlets[0]; // Already loaded with parentAdminId
-                        console.log('OUTLETS:', outlet);
                         if (!outlet || !outlet.createdBy) {
-                            console.error('❌ Outlet not loaded or missing parentAdminId');
+                            console.error('[DataLoader] loadProducts: outlet not loaded or missing parentAdminId');
                             return;
                         }
-                        
+
                         const parentAdminId = outlet.createdBy;
                         const outletId = state.assignedOutlet;
-                        
-                        console.log('📦 Loading outlet inventory from:', `users/${parentAdminId}/outlets/${outletId}/inventory`);
-                        
+
                         const inventoryRef = collection(db, 'users', parentAdminId, 'outlets', outletId, 'outlet_inventory');
                         let rows = await fetchCollectionRows(inventoryRef, `outlet_inventory:${outletId}`);
                         if (rows.length === 0 && parentAdminId) {
@@ -111,13 +104,10 @@ class DataLoaderService {
                             rows = rows.concat(extra);
                         }
                         state.allProducts = rows;
-                        
-                        console.log('✓ Loaded outlet products:', state.allProducts.length);
-                        
+
                     } else {
                         // ADMIN: same paths as POS — user-scoped inventory first, then legacy root
                         const uid = state.currentUser.uid;
-                        console.log('📦 Loading admin inventory (scoped then legacy):', `users/${uid}/inventory`);
                         let rows = await fetchCollectionRows(
                             collection(db, 'users', uid, 'inventory'),
                             `users/${uid}/inventory`
@@ -126,45 +116,33 @@ class DataLoaderService {
                             rows = await fetchCollectionRows(collection(db, 'inventory'), 'inventory_legacy');
                         }
                         state.allProducts = rows;
-                        
-                        console.log('✓ Loaded main products:', state.allProducts.length);
                     }
-                    
+
                 } catch (error) {
-                    console.error('❌ Error loading products:', error);
+                    console.error('[DataLoader] loadProducts error:', error);
                 }
             }
 
             async loadSales() {
                 if (!state.currentUser) return;
-                
-                
-                console.log('=== LOADING SALES ===');
-                console.log('User role:', state.userRole);
-                console.log('Assigned Outlet:', state.assignedOutlet);
-                
+
                 try {
                     state.allSales = [];
-                    
+
                     if (state.userRole === 'outlet_manager' && state.assignedOutlet) {
                         // OUTLET MANAGER: Load from outlet sales
                         const outlet = state.allOutlets[0];
-                        console.log('OUTLETS:', outlet);
                         if (!outlet || !outlet.createdBy) {
-                            console.error('❌ Outlet not loaded or missing parentAdminId');
+                            console.error('[DataLoader] loadSales: outlet not loaded or missing parentAdminId');
                             return;
                         }
-                        
+
                         const parentAdminId = outlet.createdBy;
                         const outletId = state.assignedOutlet;
-                        
-                        console.log('💰 Loading outlet sales from:', `users/${parentAdminId}/outlets/${outletId}/sales`);
-                        
+
                         const salesRef = collection(db, 'users', parentAdminId, 'outlets', outletId, 'outlet_sales');
                         state.allSales = await fetchCollectionRows(salesRef, `outlet_sales:${outletId}`);
-                        
-                        console.log('✓ Loaded outlet sales:', state.allSales.length);
-                        
+
                     } else {
                         // ADMIN: load sales based on selected outlet filter (main vs all vs specific outlet)
                         const uid = state.currentUser.uid;
@@ -179,33 +157,27 @@ class DataLoaderService {
 
                         let mainRows = [];
                         if (shouldLoadMain) {
-                            console.log('💰 Loading main sales from: sales/');
-                            const mainSalesRef = collection(db, 'sales');
-                            mainRows = await fetchCollectionRows(mainSalesRef, 'sales');
-                            console.log('✓ Loaded main sales:', mainRows.length);
+                            mainRows = await fetchCollectionRows(collection(db, 'sales'), 'sales');
                         }
 
                         let outletRows = [];
                         if (outletIdsToLoad.length > 0) {
-                            console.log(`💰 Loading outlet sales for ${outletIdsToLoad.length} outlet(s) under users/${uid}/outlets/*/outlet_sales`);
                             for (const outletId of outletIdsToLoad) {
                                 const outletSalesRef = collection(db, 'users', uid, 'outlets', outletId, 'outlet_sales');
                                 const rows = await fetchCollectionRows(outletSalesRef, `outlet_sales:${outletId}`);
                                 outletRows = outletRows.concat(rows.map(r => ({
                                     ...r,
                                     outletId: r.outletId || outletId,
-                                    // enhanced-dashboard filters main vs outlets using location/outletId
                                     location: r.location || outletId
                                 })));
                             }
                         }
 
                         state.allSales = mainRows.concat(outletRows);
-                        console.log(`✓ Loaded sales (${selectedFilter}):`, state.allSales.length);
                     }
-                    
+
                 } catch (error) {
-                    console.error('❌ Error loading sales:', error);
+                    console.error('[DataLoader] loadSales error:', error);
                 }
             }
 
@@ -259,7 +231,7 @@ class DataLoaderService {
                                         state.allExpenses.push({ ...doc.data(), id: doc.id, source: outlet.id });
                                     });
                                 } catch (err) {
-                                    console.log(`No expenses for outlet ${outlet.name}`);
+                                    // outlet may have no expenses subcollection yet — skip silently
                                 }
                             }
                             
@@ -372,11 +344,6 @@ class DataLoaderService {
                         
                         state.allOutlets.push(outletData);
                     }
-                    console.log("Outlets loaded with inventory values:", state.allOutlets.map(o => ({
-                        name: o.name, 
-                        inventoryValue: o.inventoryValue
-                    })));
-                    
                     return state.allOutlets;
                 } catch (error) {
                     console.error('Load outlets error:', error);
@@ -496,189 +463,66 @@ class DataLoaderService {
             }
 
             async loadSingleOutlet(outletId) {
-                console.log('╔════════════════════════════════════════╗');
-                console.log('║   LOADING SINGLE OUTLET (ENHANCED)     ║');
-                console.log('╚════════════════════════════════════════╝');
-                
-                console.log('📋 Input Parameters:');
-                console.log('  Outlet ID:', outletId);
-                console.log('  Current User UID:', state.currentUser?.uid);
-                console.log('  Current User Email:', state.currentUser?.email);
-                
                 if (!state.currentUser || !state.currentUser.uid) {
-                    console.error('❌ FAILED: No current user');
+                    console.error('[DataLoader] loadSingleOutlet: no current user');
                     Utils.showToast('User session invalid. Please log in again.', 'error');
                     return;
                 }
-                
+
                 try {
-                    // ═══════════════════════════════════════
-                    // STEP 1: Load Outlet Manager Document
-                    // ═══════════════════════════════════════
-                    console.log('\n📄 STEP 1: Loading Outlet Manager Document');
-                    const managerPath = `users/${state.currentUser.uid}`;
-                    console.log('  Path:', managerPath);
-                    
+                    // Load outlet manager document to get parent admin reference
                     const userDocRef = doc(db, 'users', state.currentUser.uid);
                     const userDoc = await getDoc(userDocRef);
-                    
+
                     if (!userDoc.exists()) {
-                        console.error('❌ FAILED: Manager document not found');
-                        console.log('  Expected path:', managerPath);
+                        console.error('[DataLoader] loadSingleOutlet: manager document missing for uid', state.currentUser.uid);
                         Utils.showToast('Your user profile is missing. Please contact administrator.', 'error');
                         return;
                     }
-                    
-                    console.log('✅ Manager document found');
-                    
+
                     const userData = userDoc.data();
-                    console.log('  Manager Data:', JSON.stringify(userData, null, 2));
-                    
-                    // ═══════════════════════════════════════
-                    // STEP 2: Extract Parent Admin ID
-                    // ═══════════════════════════════════════
-                    console.log('\n🔑 STEP 2: Extracting Parent Admin ID');
                     const parentAdminId = userData.createdBy;
-                    
+
                     if (!parentAdminId) {
-                        console.error('❌ FAILED: No parent admin ID (createdBy field is missing)');
-                        console.log('  Manager Data:', userData);
-                        console.log('\n🔧 FIX REQUIRED:');
-                        console.log('  The outlet manager account is misconfigured.');
-                        console.log('  Admin needs to run the fixOutletManagerDocument() function.');
+                        console.error('[DataLoader] loadSingleOutlet: createdBy field missing — account misconfigured');
                         Utils.showToast('Account configuration error. Missing parent admin reference. Please contact administrator.', 'error');
                         return;
                     }
-                    
-                    console.log('✅ Parent Admin ID found:', parentAdminId);
-                    console.log('  Created By Email:', userData.createdByEmail);
-                    
-                    // ═══════════════════════════════════════
-                    // STEP 3: Load Outlet Document
-                    // ═══════════════════════════════════════
-                    console.log('\n🏪 STEP 3: Loading Outlet Document');
-                    const outletPath = `users/${parentAdminId}/outlets/${outletId}`;
-                    console.log('  Path:', outletPath);
-                    
+
+                    // Load outlet document
                     const outletDocRef = doc(db, 'users', parentAdminId, 'outlets', outletId);
                     const outletDoc = await getDoc(outletDocRef);
-                    
+
                     if (!outletDoc.exists()) {
-                        console.error('❌ FAILED: Outlet document not found');
-                        console.log('  Expected path:', outletPath);
-                        
-                        // Debug: List all outlets under this admin
-                        console.log('\n🔍 DEBUG: Checking what outlets exist...');
-                        try {
-                            const outletsRef = collection(db, 'users', parentAdminId, 'outlets');
-                            const outletsSnap = await getDocs(outletsRef);
-                            
-                            console.log(`  Found ${outletsSnap.size} outlet(s) under admin ${parentAdminId}:`);
-                            outletsSnap.forEach(doc => {
-                                console.log(`    - ID: ${doc.id}`);
-                                console.log(`      Name: ${doc.data().name}`);
-                            });
-                            
-                            if (outletsSnap.size === 0) {
-                                console.log('  ⚠️ No outlets found. Admin needs to create outlets first.');
-                            } else {
-                                console.log(`  ⚠️ Outlet ${outletId} does not exist under this admin.`);
-                                console.log('  ⚠️ The outlet may have been deleted or the ID is wrong.');
-                            }
-                        } catch (debugError) {
-                            console.error('  Debug query failed:', debugError);
-                        }
-                        
+                        console.error(`[DataLoader] loadSingleOutlet: outlet ${outletId} not found under admin ${parentAdminId}`);
                         Utils.showToast('Your assigned outlet was not found. Please contact administrator.', 'error');
                         return;
                     }
-                    
-                    console.log('✅ Outlet document found');
+
                     const outletData = { ...outletDoc.data(), id: outletDoc.id };
-                    console.log('  Outlet Name:', outletData.name);
-                    console.log('  Outlet Location:', outletData.location);
-                    
-                    // ═══════════════════════════════════════
-                    // STEP 4: Load Outlet Inventory
-                    // ═══════════════════════════════════════
-                    console.log('\n📦 STEP 4: Loading Outlet Inventory');
-                    const inventoryPath = `users/${parentAdminId}/outlets/${outletId}/outlet_inventory`;
-                    console.log('  Path:', inventoryPath);
-                    
+
+                    // Load outlet inventory value
                     const inventoryRef = collection(db, 'users', parentAdminId, 'outlets', outletId, 'outlet_inventory');
                     const inventorySnapshot = await getDocs(inventoryRef);
-                    
-                    console.log(`✅ Found ${inventorySnapshot.size} inventory item(s)`);
-                    
+
                     let inventoryValue = 0;
                     inventorySnapshot.forEach(doc => {
                         const item = doc.data();
-                        const itemValue = (item.quantity || 0) * (item.cost || 0);
-                        inventoryValue += itemValue;
-                        console.log(`  - ${item.name}: ${item.quantity} @ ${item.cost} = ${itemValue}`);
+                        inventoryValue += (item.quantity || 0) * (item.cost || 0);
                     });
-                    
-                    console.log('  Total Inventory Value:', inventoryValue);
-                    
-                    // ═══════════════════════════════════════
-                    // STEP 5: Load Consignments
-                    // ═══════════════════════════════════════
-                    console.log('\n🚚 STEP 5: Loading Consignments');
-                    const consignmentsPath = `users/${parentAdminId}/outlets/${outletId}/consignments`;
-                    console.log('  Path:', consignmentsPath);
-                    
+
+                    // Load consignments (count only — full data loaded on demand)
                     const consignmentsRef = collection(db, 'users', parentAdminId, 'outlets', outletId, 'consignments');
                     const consignmentsSnapshot = await getDocs(consignmentsRef);
-                    
-                    console.log(`✅ Found ${consignmentsSnapshot.size} consignment(s)`);
-                    
-                    consignmentsSnapshot.forEach(doc => {
-                        const consignment = doc.data();
-                        console.log(`  - Consignment ${doc.id}:`);
-                        console.log(`    Status: ${consignment.status}`);
-                        console.log(`    Date: ${consignment.date}`);
-                        console.log(`    Products: ${consignment.products?.length || 0}`);
-                    });
-                    
-                    // ═══════════════════════════════════════
-                    // STEP 6: Store Data in State
-                    // ═══════════════════════════════════════
-                    console.log('\n💾 STEP 6: Storing Data in Application State');
-                    
+
                     outletData.inventoryValue = inventoryValue;
                     outletData.createdBy = parentAdminId;
-                    
+
                     state.allOutlets = [outletData];
-                    
-                    console.log('✅ Data stored successfully');
-                    console.log('  state.allOutlets:', state.allOutlets.length);
-                    console.log('  Parent Admin ID:', outletData.parentAdminId);
-                    
-                    console.log('\n╔════════════════════════════════════════╗');
-                    console.log('║     ✅ OUTLET LOADED SUCCESSFULLY      ║');
-                    console.log('╚════════════════════════════════════════╝');
-                    
-                    console.log('Summary:');
-                    console.log('  Outlet:', outletData.name);
-                    console.log('  Manager:', state.currentUser.email);
-                    console.log('  Parent Admin:', parentAdminId);
-                    console.log('  Inventory Items:', inventorySnapshot.size);
-                    console.log('  Inventory Value:', inventoryValue);
-                    console.log('  Consignments:', consignmentsSnapshot.size);
-                    
+
                 } catch (error) {
-                    console.error('\n╔════════════════════════════════════════╗');
-                    console.error('║           ❌ ERROR OCCURRED            ║');
-                    console.error('╚════════════════════════════════════════╝');
-                    console.error('Error Name:', error.name);
-                    console.error('Error Code:', error.code);
-                    console.error('Error Message:', error.message);
-                    console.error('Error Stack:', error.stack);
-                    
+                    console.error('[DataLoader] loadSingleOutlet error:', error.code, error.message);
                     if (error.code === 'permission-denied') {
-                        console.error('\n🔒 PERMISSION DENIED');
-                        console.error('Firestore security rules are blocking access.');
-                        console.error('Check Firebase Console → Firestore → Rules');
                         Utils.showToast('Access denied. Please contact administrator to check permissions.', 'error');
                     } else {
                         Utils.showToast('Failed to load outlet: ' + error.message, 'error');
@@ -701,9 +545,8 @@ class DataLoaderService {
                         });
                     });
                     
-                    console.log('✓ Loaded suppliers:', state.allSuppliers.length);
                 } catch (error) {
-                    console.error('Error loading suppliers:', error);
+                    console.error('[DataLoader] loadSuppliers error:', error);
                 }
             }
 
@@ -723,9 +566,8 @@ class DataLoaderService {
                         });
                     });
                     
-                    console.log('✓ Loaded purchase orders:', state.allPurchaseOrders.length);
                 } catch (error) {
-                    console.error('Error loading purchase orders:', error);
+                    console.error('[DataLoader] loadPurchaseOrders error:', error);
                 }
             }
 
@@ -751,55 +593,26 @@ class DataLoaderService {
             }
 
             async loadAll() {
-                console.log('╔════════════════════════════════════════╗');
-                console.log('║        LOADING ALL DATA (FIXED)        ║');
-                console.log('╚════════════════════════════════════════╝');
-                
                 if (!state.currentUser || !state.currentUser.uid) {
-                    console.error('❌ Cannot load data: No current user');
+                    console.error('[DataLoader] loadAll: no current user');
                     return;
                 }
-                
-                console.log('User:', state.currentUser.email);
-                console.log('Role:', state.userRole);
-                console.log('Assigned Outlet:', state.assignedOutlet);
-                
+
                 Utils.showSpinner();
-                
+
                 try {
                     if (state.userRole === 'outlet_manager' && state.assignedOutlet) {
-                        // ═══════════════════════════════════════════════════
-                        // OUTLET MANAGER: Load outlet FIRST, then other data
-                        // ═══════════════════════════════════════════════════
-                        console.log('\n🏪 OUTLET MANAGER MODE');
-                        console.log('Assigned outlet:', state.assignedOutlet);
-                        
-                        // STEP 1: Load outlet FIRST (critical!)
-                        console.log('\n1️⃣ Loading outlet...');
+                        // Load outlet FIRST — products and sales depend on outlet.createdBy
                         await this.loadSingleOutlet(state.assignedOutlet);
-                        
-                        /*if (!outletLoaded) {
-                            console.error('❌ Failed to load outlet');
-                            Utils.showToast('Failed to load outlet data', 'error');
-                            return;
-                        }*/
-                        
-                        console.log('✅ Outlet loaded successfully');
-                        console.log('   Outlet:', state.allOutlets[0]?.name);
-                        console.log('   Parent Admin ID:', state.allOutlets[0]?.createdBy);
-                        
-                        // Verify outlet is in state
+
                         if (!state.allOutlets || state.allOutlets.length === 0) {
-                            console.error('❌ state.allOutlets is empty!');
                             Utils.showToast('Outlet data missing', 'error');
                             return;
                         }
-                        
-                        // STEP 2: Now load other data (outlet is available)
-                        console.log('\n2️⃣ Loading products, sales, customers, expenses...');
+
                         await Promise.all([
-                            this.loadProducts(),   // ✅ Now outlet is available!
-                            this.loadSales(),      // ✅ Now outlet is available!
+                            this.loadProducts(),
+                            this.loadSales(),
                             this.loadExpenses(),
                             this.loadCustomers(),
                             this.loadLiabilities(),
@@ -807,17 +620,8 @@ class DataLoaderService {
                             this.loadSuppliers(),
                             this.loadPurchaseOrders()
                         ]);
-                        
-                        console.log('✅ All outlet manager data loaded');
-                        console.log('   Products:', state.allProducts.length);
-                        console.log('   Sales:', state.allSales.length);
-                        
+
                     } else if (state.userRole === 'admin') {
-                        // ═══════════════════════════════════════════════════
-                        // ADMIN: Load all data in parallel
-                        // ═══════════════════════════════════════════════════
-                        console.log('\n👑 ADMIN MODE');
-                        
                         await Promise.all([
                             this.loadProducts(),
                             this.loadSales(),
@@ -829,27 +633,13 @@ class DataLoaderService {
                             this.loadSuppliers(),
                             this.loadPurchaseOrders()
                         ]);
-                        
-                        console.log('✅ All admin data loaded');
-                        console.log('   Products:', state.allProducts.length);
-                        console.log('   Sales:', state.allSales.length);
-                        console.log('   Outlets:', state.allOutlets.length);
-                        
+
                     } else {
-                        console.warn('⚠️ Unknown role or missing outlet assignment');
-                        console.log('Role:', state.userRole);
-                        console.log('Assigned Outlet:', state.assignedOutlet);
+                        console.warn('[DataLoader] loadAll: unknown role or missing outlet assignment', state.userRole);
                     }
-                    
-                    console.log('\n╔════════════════════════════════════════╗');
-                    console.log('║       ✅ DATA LOADING COMPLETE         ║');
-                    console.log('╚════════════════════════════════════════╝');
-                    
+
                 } catch (error) {
-                    console.error('\n❌ ERROR LOADING DATA:', error);
-                    console.error('Error code:', error.code);
-                    console.error('Error message:', error.message);
-                    console.error('Error stack:', error.stack);
+                    console.error('[DataLoader] loadAll error:', error.code, error.message);
                     Utils.showToast('Error loading data: ' + error.message, 'error');
                 } finally {
                     Utils.hideSpinner();

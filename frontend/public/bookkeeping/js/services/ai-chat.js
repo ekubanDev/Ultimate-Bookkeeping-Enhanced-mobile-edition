@@ -3,6 +3,7 @@
  */
 
 import { auth } from '../config/firebase.js';
+import { isDebtPayment, getSaleTotal } from '../utils/accounting.js';
 
 const BACKEND_URL = window.BACKEND_URL || '';
 
@@ -318,21 +319,13 @@ class AIChatService {
         const products = s.allProducts || [];
         const sales = s.allSales || [];
         const expenses = s.allExpenses || [];
-        const operatingExpenses = expenses.filter(e => {
-            const type = (e.expenseType || '').toLowerCase();
-            const cat = (e.category || '').toLowerCase();
-            return type !== 'liability_payment' && cat !== 'debt payment' && cat !== 'loan repayment';
-        });
-        const debtPaymentsFromExpenses = expenses.filter(e => {
-            const type = (e.expenseType || '').toLowerCase();
-            const cat = (e.category || '').toLowerCase();
-            return type === 'liability_payment' || cat === 'debt payment' || cat === 'loan repayment';
-        });
+        const operatingExpenses = expenses.filter(e => !isDebtPayment(e));
+        const debtPaymentsFromExpenses = expenses.filter(e => isDebtPayment(e));
         const debtFromTx = (s.allLiabilityPayments || []).reduce(
             (sum, p) => sum + (parseFloat(p.amount) || 0),
             0
         );
-        const totalRevenue = sales.reduce((sum, sl) => sum + (sl.quantity || 0) * (sl.price || 0), 0);
+        const totalRevenue = sales.reduce((sum, sl) => sum + getSaleTotal(sl), 0);
         const totalExpenses = operatingExpenses.reduce((sum, e) => sum + (e.amount || 0), 0);
         const totalDebtPayments =
             debtFromTx + debtPaymentsFromExpenses.reduce((sum, e) => sum + (e.amount || 0), 0);

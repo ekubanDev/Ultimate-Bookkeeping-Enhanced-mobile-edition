@@ -3,6 +3,8 @@
  * Provides AI-powered insights, advanced visualizations, and comprehensive metrics
  */
 
+import { isDebtPayment, getSaleTotal } from '../utils/accounting.js';
+
 const BACKEND_URL = window.BACKEND_URL || '';
 
 export class EnhancedDashboard {
@@ -167,13 +169,7 @@ export class EnhancedDashboard {
         };
     }
 
-    isDebtPayment(expense) {
-        const type = (expense.expenseType || '').toLowerCase();
-        const cat = (expense.category || '').toLowerCase();
-        return type === 'liability_payment'
-            || cat === 'debt payment'
-            || cat === 'loan repayment';
-    }
+    isDebtPayment(expense) { return isDebtPayment(expense); }
 
     getThemeColor(varName) {
         const dashboard = document.getElementById('dashboard');
@@ -951,11 +947,7 @@ export class EnhancedDashboard {
     // ==================== UTILITY METHODS ====================
 
     calculateRevenue(sales) {
-        return sales.reduce((sum, s) => {
-            const subtotal = (s.quantity || 0) * (s.price || 0);
-            const discounted = subtotal * (1 - (s.discount || 0) / 100);
-            return sum + discounted * (1 + (s.tax || 0) / 100);
-        }, 0);
+        return sales.reduce((sum, s) => sum + getSaleTotal(s), 0);
     }
 
     calculateCOGS(sales) {

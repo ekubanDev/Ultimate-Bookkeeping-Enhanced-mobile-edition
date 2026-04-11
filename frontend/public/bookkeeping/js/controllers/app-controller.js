@@ -25,6 +25,7 @@ import {
 } from '../config/firebase.js';
 import { state } from '../utils/state.js';
 import { Utils } from '../utils/utils.js';
+import { isDebtPayment, getSaleTotal, validateProductWrite, validateExpenseWrite, validateLiabilityWrite } from '../utils/accounting.js';
 import { firebaseService } from '../services/firebase-service.js';
 import { dataLoader } from '../services/data-loader.js';
 import ActivityLogger from '../services/activity-logger.js';
@@ -1612,8 +1613,6 @@ class AppController {
                     if (addProductBtn) addProductBtn.style.display = 'none';
                     if (outletSelector) outletSelector.style.display = 'none';
                     if (quickExportItem) quickExportItem.style.display = 'none';
-                    
-                    console.log('✓ Outlet Manager restrictions applied (Consignments visible for receiving)');
                 } else if (state.userRole === 'admin') {
                     // Admin: clear outlet context and show all admin controls
                     if (outletContextEl) outletContextEl.style.display = 'none';
@@ -1629,9 +1628,8 @@ class AppController {
                     if (outletSelector) outletSelector.style.display = '';
                     if (quickExportItem) quickExportItem.style.display = '';
                 } else {
-                    // Fallback: treat as admin but log for debugging
-                    console.warn('Unknown userRole, defaulting to admin UI');
-                    state.userRole = 'admin';
+                    // Fallback: unknown role — show restricted UI, do NOT mutate state.userRole
+                    console.warn('[applyRoleBasedUI] Unrecognised userRole:', state.userRole, '— showing restricted UI');
                     if (outletContextEl) outletContextEl.style.display = 'none';
                     if (roleDisplay) {
                         roleDisplay.innerHTML = `<span class="role-badge" style="background: #dc3545;">Admin</span>`;
@@ -2049,7 +2047,7 @@ class AppController {
 
                 this._realtimeUnsubs.push(onSnapshot(salesRef, () => {
                     dataLoader.loadSales().then(() => {
-                        this.markSectionsDirty(['sales', 'dashboard']);
+                        this.markSectionsDirty(['sales', 'dashboard', 'accounting', 'analytics']);
                         this._refreshCurrentSectionIfDirty();
                     });
                 }));
@@ -2066,14 +2064,14 @@ class AppController {
                     );
                     this._realtimeUnsubs.push(onSnapshot(outletExpensesRef, () => {
                         dataLoader.loadExpenses().then(() => {
-                            this.markSectionsDirty(['expenses', 'dashboard', 'analytics']);
+                            this.markSectionsDirty(['expenses', 'dashboard', 'analytics', 'accounting']);
                             this._refreshCurrentSectionIfDirty();
                         });
                     }));
                 } else if (state.userRole === 'admin') {
                     this._realtimeUnsubs.push(onSnapshot(firebaseService.getUserCollection('expenses'), () => {
                         dataLoader.loadExpenses().then(() => {
-                            this.markSectionsDirty(['expenses', 'dashboard', 'analytics']);
+                            this.markSectionsDirty(['expenses', 'dashboard', 'analytics', 'accounting']);
                             this._refreshCurrentSectionIfDirty();
                         });
                     }));
@@ -2092,6 +2090,23 @@ class AppController {
                         this._refreshCurrentSectionIfDirty();
                     });
                 }));
+
+                // payment_transactions drives dashboard debtPayments and accounting cash-flow —
+                // subscribe so cross-device writes are reflected without a full reload.
+                if (state.userRole === 'admin') {
+                    this._realtimeUnsubs.push(onSnapshot(
+                        query(
+                            collection(db, 'payment_transactions'),
+                            where('type', '==', 'liability_payment')
+                        ),
+                        () => {
+                            dataLoader.loadLiabilityPayments().then(() => {
+                                this.markSectionsDirty(['liabilities', 'dashboard', 'accounting']);
+                                this._refreshCurrentSectionIfDirty();
+                            });
+                        }
+                    ));
+                }
             }
 
             async handleLogin(e) {
@@ -2165,11 +2180,14 @@ class AppController {
                         cost: parseFloat(document.getElementById('product-cost').value),
                         price: parseFloat(document.getElementById('product-price').value),
                         quantity: parseInt(document.getElementById('product-quantity').value),
-                        minStock: parseInt(document.getElementById('product-min-stock').value),
+                        minStock: parseInt(document.getElementById('product-min-stock').value) || 0,
                         barcode: barcode,
                         createdAt: new Date().toISOString()
                     };
-                    
+
+                    const guard = validateProductWrite(productData);
+                    if (!guard.ok) { Utils.showToast(guard.error, 'error'); return; }
+
                     await addDoc(firebaseService.getUserCollection('inventory'), productData);
                     await ActivityLogger.log('Product Added', `Added product: ${productData.name}`);
                     
@@ -2195,10 +2213,13 @@ class AppController {
                         cost: parseFloat(document.getElementById('edit-product-cost').value),
                         price: parseFloat(document.getElementById('edit-product-price').value),
                         quantity: parseInt(document.getElementById('edit-product-quantity').value),
-                        minStock: parseInt(document.getElementById('edit-product-min-stock').value),
+                        minStock: parseInt(document.getElementById('edit-product-min-stock').value) || 0,
                         updatedAt: new Date().toISOString()
                     };
-                    
+
+                    const guard = validateProductWrite(productData);
+                    if (!guard.ok) { Utils.showToast(guard.error, 'error'); return; }
+
                     await updateDoc(doc(firebaseService.getUserCollection('inventory'), productId), productData);
                     await ActivityLogger.log('Product Updated', `Updated product: ${productData.name}`);
                     
@@ -2212,8 +2233,13 @@ class AppController {
             }
 
             async deleteProduct(productId) {
+                if (state.userRole !== 'admin') {
+                    metricsService.emit('access_denied', { resource: 'action', resource_name: 'deleteProduct', actor_role: state.userRole });
+                    Utils.showToast('Access restricted to administrators', 'warning');
+                    return;
+                }
                 if (!confirm('Are you sure you want to delete this product?')) return;
-                
+
                 Utils.showSpinner();
                 try {
                     const product = state.allProducts.find(p => p.id === productId);
@@ -2372,6 +2398,11 @@ class AppController {
             }
 
             editProduct(productId) {
+                if (state.userRole !== 'admin') {
+                    metricsService.emit('access_denied', { resource: 'action', resource_name: 'editProduct', actor_role: state.userRole });
+                    Utils.showToast('Access restricted to administrators', 'warning');
+                    return;
+                }
                 const product = state.allProducts.find(p => p.id === productId);
                 if (!product) return;
                 
@@ -2431,6 +2462,7 @@ class AppController {
                 if (paginatedProducts.length === 0) {
                     tbody.innerHTML = '<tr><td colspan="6" class="no-data">No products found</td></tr>';
                 } else {
+                    const isAdmin = state.userRole === 'admin';
                     paginatedProducts.forEach(product => {
                         const row = document.createElement('tr');
                         row.innerHTML = `
@@ -2441,8 +2473,10 @@ class AppController {
                             <td>${product.quantity}</td>
                             <td class="actions">
                                 <button onclick="appController.viewProduct('${product.id}')" title="View"><i class="fas fa-eye"></i></button>
+                                ${isAdmin ? `
                                 <button onclick="appController.editProduct('${product.id}')" title="Edit"><i class="fas fa-edit"></i></button>
                                 <button class="danger" onclick="appController.deleteProduct('${product.id}')" title="Delete"><i class="fas fa-trash"></i></button>
+                                ` : ''}
                             </td>
                         `;
                         tbody.appendChild(row);
@@ -3267,6 +3301,11 @@ class AppController {
             }
 
             editSale(saleId) {
+                if (state.userRole !== 'admin') {
+                    metricsService.emit('access_denied', { resource: 'action', resource_name: 'editSale', actor_role: state.userRole });
+                    Utils.showToast('Access restricted to administrators', 'warning');
+                    return;
+                }
                 const sale = state.allSales.find(s => s.id === saleId);
                 if (!sale) return;
                 
@@ -3286,8 +3325,13 @@ class AppController {
             }
 
             async deleteSale(saleId) {
+                if (state.userRole !== 'admin') {
+                    metricsService.emit('access_denied', { resource: 'action', resource_name: 'deleteSale', actor_role: state.userRole });
+                    Utils.showToast('Access restricted to administrators', 'warning');
+                    return;
+                }
                 if (!confirm('Delete this sale? This will restore the product quantity.')) return;
-                
+
                 Utils.showSpinner();
                 
                 try {
@@ -3305,8 +3349,6 @@ class AppController {
                         Utils.hideSpinner();
                         return;
                     }
-                    
-                    console.log('Deleting sale with paths:', paths);
                     
                     const product = state.allProducts.find(p => p.name === sale.product);
                     
@@ -3356,8 +3398,6 @@ class AppController {
                     // ═══════════════════════════════════════════════════════════
                     // OUTLET MANAGER: Show outlet-specific analytics
                     // ═══════════════════════════════════════════════════════════
-                    console.log('Rendering outlet manager analytics');
-                    
                     // Hide expense-related charts
                     const expenseChartContainer = document.getElementById('expenses-breakdown-chart');
                     if (expenseChartContainer) {
@@ -3517,25 +3557,22 @@ class AppController {
                                 </thead>
                                 <tbody>
                                     ${sales.map(sale => {
-                                        const qty = parseFloat(sale.quantity) || 0;
-                                        const price = parseFloat(sale.price) || 0;
-                                        const discount = parseFloat(sale.discount) || 0;
-                                        const tax = parseFloat(sale.tax) || 0;
-                                        const subtotal = qty * price;
-                                        const discounted = subtotal * (1 - discount / 100);
-                                        const total = discounted * (1 + tax / 100);
+                                        const total = getSaleTotal(sale);
                                         const sid = safeId(sale.id);
+                                        const adminActions = state.userRole === 'admin' ? `
+                                                    <button onclick="appController.editSale('${sid}')" title="Edit"><i class="fas fa-edit"></i></button>
+                                                    <button class="danger" onclick="appController.deleteSale('${sid}')" title="Delete"><i class="fas fa-trash"></i></button>
+                                        ` : '';
                                         return `
                                             <tr>
                                                 <td>${(sale.customer || '').toString().replace(/</g, '&lt;')}</td>
                                                 <td>${(sale.product || '').toString().replace(/</g, '&lt;')}</td>
-                                                <td>${sale.quantity}</td>
-                                                <td>${Utils.formatCurrency(price)}</td>
+                                                <td>${parseFloat(sale.quantity) || 0}</td>
+                                                <td>${Utils.formatCurrency(parseFloat(sale.price) || 0)}</td>
                                                 <td>${Utils.formatCurrency(total)}</td>
                                                 <td class="actions">
                                                     <button onclick="appController.showReturnModal('${sid}')" title="Return"><i class="fas fa-undo"></i></button>
-                                                    <button onclick="appController.editSale('${sid}')" title="Edit"><i class="fas fa-edit"></i></button>
-                                                    <button class="danger" onclick="appController.deleteSale('${sid}')" title="Delete"><i class="fas fa-trash"></i></button>
+                                                    ${adminActions}
                                                 </td>
                                             </tr>
                                         `;
@@ -3589,16 +3626,9 @@ class AppController {
                         createdAt: new Date().toISOString()
                     };
 
-                    const catLower = String(expenseData.category || '').toLowerCase();
-                    if (catLower === 'debt payment' || catLower === 'loan repayment') {
-                        Utils.showToast(
-                            'Debt and loan repayments are not saved as expenses. Record them under Liabilities → Record payment.',
-                            'warning'
-                        );
-                        Utils.hideSpinner();
-                        return;
-                    }
-                    
+                    const guard = validateExpenseWrite(expenseData);
+                    if (!guard.ok) { Utils.showToast(guard.error, 'warning'); Utils.hideSpinner(); return; }
+
                     // Determine where to save based on user role and selection
                     if (state.userRole === 'outlet_manager') {
                         // Outlet manager - save to outlet_expenses
@@ -3854,29 +3884,23 @@ class AppController {
                 Utils.showSpinner();
                 
                 try {
-                    const amount = parseFloat(document.getElementById('liability-amount').value);
-                    const balance = parseFloat(document.getElementById('liability-balance').value);
-                    
-                    if (balance > amount) {
-                        Utils.showToast('Balance cannot exceed original amount', 'error');
-                        Utils.hideSpinner();
-                        return;
-                    }
-                    
                     const liabilityData = {
                         type: document.getElementById('liability-type').value,
                         creditor: document.getElementById('liability-creditor').value,
                         description: document.getElementById('liability-description').value,
-                        amount: amount,
-                        balance: balance,
+                        amount: parseFloat(document.getElementById('liability-amount').value),
+                        balance: parseFloat(document.getElementById('liability-balance').value),
                         dueDate: document.getElementById('liability-due-date').value,
                         interestRate: parseFloat(document.getElementById('liability-interest').value) || 0,
-                        status: balance === 0 ? 'paid' : 'active',
                         notes: document.getElementById('liability-notes').value,
                         createdAt: new Date().toISOString(),
                         updatedAt: new Date().toISOString()
                     };
-                    
+                    liabilityData.status = liabilityData.balance === 0 ? 'paid' : 'active';
+
+                    const guard = validateLiabilityWrite(liabilityData);
+                    if (!guard.ok) { Utils.showToast(guard.error, 'error'); Utils.hideSpinner(); return; }
+
                     await addDoc(firebaseService.getUserCollection('liabilities'), liabilityData);
                     await ActivityLogger.log('Liability Added', `Added liability: ${liabilityData.creditor} - ${Utils.formatCurrency(liabilityData.amount)}`);
                     
@@ -3917,31 +3941,28 @@ class AppController {
                     : `flow_${Date.now()}`;
                 
                 try {
+                    metricsService.emit('flow_started', {
+                        flow_name: 'record_liability_payment'
+                    }, { correlationId: flowCorrelationId });
+
                     const liabilityId = document.getElementById('liability-payment-id').value;
                     const paymentAmount = parseFloat(document.getElementById('liability-payment-amount').value);
                     const paymentDate = document.getElementById('liability-payment-date').value;
                     const paymentMethod = document.getElementById('liability-payment-method')?.value || 'Cash';
                     const paymentNotes = document.getElementById('liability-payment-notes')?.value || '';
-                    
+
                     const liability = state.allLiabilities.find(l => l.id === liabilityId);
                     if (!liability) throw new Error('Liability not found');
-                    
+
                     if (paymentAmount <= 0) {
                         throw new Error('Payment amount must be greater than 0');
                     }
-                    
+
                     if (paymentAmount > liability.balance) {
                         throw new Error('Payment amount exceeds balance');
                     }
                     
                     const newBalance = liability.balance - paymentAmount;
-                    
-                    console.log('\n=== RECORDING LIABILITY PAYMENT ===');
-                    console.log('Liability ID:', liabilityId);
-                    console.log('Creditor:', liability.creditor || liability.supplierName);
-                    console.log('Payment Amount:', Utils.formatCurrency(paymentAmount));
-                    console.log('Current Balance:', Utils.formatCurrency(liability.balance));
-                    console.log('New Balance:', Utils.formatCurrency(newBalance));
                     
                     const batch = writeBatch(db);
                     
@@ -3954,36 +3975,24 @@ class AppController {
                         lastPaymentAmount: paymentAmount,
                         updatedAt: serverTimestamp()
                     });
-                    console.log('✅ Liability update queued');
-                    
-                    // 2. Update supplier outstanding balance (if this is A/P)
+
+                    // Update supplier outstanding balance (if this is A/P)
                     if (liability.type === 'accounts_payable' && liability.supplierId) {
-                        console.log('\n=== UPDATING SUPPLIER BALANCE ===');
                         const supplierRef = doc(db, 'suppliers', liability.supplierId);
                         const supplierDoc = await getDoc(supplierRef);
-                        
+
                         if (supplierDoc.exists()) {
                             const currentBalance = supplierDoc.data().outstandingBalance || 0;
-                            const newSupplierBalance = currentBalance - paymentAmount;
-                            
-                            console.log('Current supplier balance:', Utils.formatCurrency(currentBalance));
-                            console.log('Payment amount:', Utils.formatCurrency(paymentAmount));
-                            console.log('New supplier balance:', Utils.formatCurrency(newSupplierBalance));
-                            
                             batch.update(supplierRef, {
-                                outstandingBalance: Math.max(0, newSupplierBalance),
+                                outstandingBalance: Math.max(0, currentBalance - paymentAmount),
                                 lastPaymentDate: paymentDate,
                                 lastPaymentAmount: paymentAmount,
                                 updatedAt: serverTimestamp()
                             });
-                            console.log('✅ Supplier balance update queued');
-                        } else {
-                            console.log('⚠️ Supplier not found:', liability.supplierId);
                         }
                     }
-                    
-                    // 3. Create payment transaction record
-                    console.log('\n=== CREATING PAYMENT RECORD ===');
+
+                    // Create payment transaction record
                     const paymentRef = doc(collection(db, 'payment_transactions'));
                     batch.set(paymentRef, {
                         type: 'liability_payment',
@@ -4008,10 +4017,7 @@ class AppController {
                     // Debt/liability principal repayments are balance-sheet / financing — not operating expenses.
                     // Cash impact is tracked via payment_transactions (type: liability_payment) only.
                     
-                    // Commit all changes
-                    console.log('\n=== COMMITTING BATCH ===');
                     await batch.commit();
-                    console.log('✅✅✅ PAYMENT RECORDED SUCCESSFULLY! ✅✅✅');
                     
                     await ActivityLogger.log('Payment Recorded', 
                         `Paid ${Utils.formatCurrency(paymentAmount)} to ${liability.creditor || liability.supplierName}`);
@@ -4025,19 +4031,20 @@ class AppController {
                     Utils.showToast(`Payment of ${Utils.formatCurrency(paymentAmount)} recorded successfully`, 'success');
                     document.getElementById('record-liability-payment-modal').style.display = 'none';
                     document.getElementById('record-liability-payment-form').reset();
-                    
-                    // Reload data
+
                     await Promise.all([
                         dataLoader.loadLiabilities(),
                         dataLoader.loadSuppliers(),
                         dataLoader.loadLiabilityPayments(),
                         dataLoader.loadExpenses()
                     ]);
-                    
+
+                    this.markSectionsDirty(['liabilities', 'dashboard', 'accounting']);
                     this.renderLiabilities();
+                    this._refreshCurrentSectionIfDirty();
                     
                 } catch (error) {
-                    console.error('❌ Record payment error:', error);
+                    console.error('[AppController] handleRecordLiabilityPayment error:', error);
                     metricsService.emit('write_failed', {
                         entity: 'liability_payment',
                         target_collection: 'payment_transactions',
@@ -5411,12 +5418,6 @@ class AppController {
                     return;
                 }
                 
-                console.log('=== RENDERING DASHBOARD ===');
-                console.log('User role:', state.userRole);
-                console.log('Sales:', state.allSales.length);
-                console.log('Expenses:', state.allExpenses.length);
-                console.log('Products:', state.allProducts.length);
-                
                 const period = document.getElementById('date-filter')?.value || 'all';
                 const { start, end } = Utils.getDateRange(period);
                 
@@ -5449,8 +5450,6 @@ class AppController {
                     // ═══════════════════════════════════════════════════════════
                     // OUTLET MANAGER: Show outlet-specific metrics
                     // ═══════════════════════════════════════════════════════════
-                    console.log('Calculating metrics for outlet manager');
-                    
                     // Outlet managers typically don't manage expenses centrally
                     // Expenses are handled by main shop
                     expensesTotal = 0;
@@ -5459,10 +5458,6 @@ class AppController {
                     // (Commission is paid to main shop, not an expense for the outlet)
                     const grossProfit = salesTotal - totalCOGS;
                     profit = grossProfit;
-                    
-                    console.log('Sales Total:', salesTotal);
-                    console.log('COGS:', totalCOGS);
-                    console.log('Gross Profit:', grossProfit);
                     
                     // Update metrics with outlet-specific labels
                     this.updateElement('total-sales', Utils.formatCurrency(salesTotal));
@@ -5476,9 +5471,6 @@ class AppController {
                         const outletCommission = grossProfit * (outlet.commissionRate / 100);
                         const mainShopShare = grossProfit - outletCommission;
                         
-                        console.log('Outlet Commission:', outletCommission);
-                        console.log('Main Shop Share:', mainShopShare);
-                        
                         // You could add additional metrics here:
                         this.updateElement('outlet-commission', Utils.formatCurrency(outletCommission));
                         this.updateElement('main-shop-share', Utils.formatCurrency(mainShopShare));
@@ -5488,8 +5480,6 @@ class AppController {
                     // ═══════════════════════════════════════════════════════════
                     // ADMIN: Show all metrics including expenses
                     // ═══════════════════════════════════════════════════════════
-                    console.log('Calculating metrics for admin');
-                    
                     const filteredExpenses = state.allExpenses.filter(e => e.date >= start && e.date <= end);
                     expensesTotal = filteredExpenses
                         .filter(e => !this.isDebtPayment(e))
@@ -5497,11 +5487,6 @@ class AppController {
                     
                     // Profit = Revenue - COGS - Operating Expenses (debt payments are balance sheet, not P&L)
                     profit = salesTotal - totalCOGS - expensesTotal;
-                    
-                    console.log('Sales Total:', salesTotal);
-                    console.log('COGS:', totalCOGS);
-                    console.log('Operating Expenses:', expensesTotal);
-                    console.log('Net Profit:', profit);
                     
                     this.updateElement('total-sales', Utils.formatCurrency(salesTotal));
                     this.updateElement('total-expenses', Utils.formatCurrency(expensesTotal));
@@ -8378,13 +8363,7 @@ class AppController {
                 }
             }
 
-            isDebtPayment(expense) {
-                const type = (expense.expenseType || '').toLowerCase();
-                const cat = (expense.category || '').toLowerCase();
-                return type === 'liability_payment'
-                    || cat === 'debt payment'
-                    || cat === 'loan repayment';
-            }
+            isDebtPayment(expense) { return isDebtPayment(expense); }
 
             getCurrencySymbolFromSetting(currency) {
                 const currencyMap = {
@@ -10380,22 +10359,26 @@ class AppController {
                     : `flow_${Date.now()}`;
                 
                 try {
+                    metricsService.emit('flow_started', {
+                        flow_name: 'generate_settlement'
+                    }, { correlationId: flowCorrelationId });
+
                     const outletId = document.getElementById('settlement-outlet').value;
                     const period = document.getElementById('settlement-period').value; // Format: YYYY-MM
-                    
+
                     if (!outletId || !period) {
                         Utils.showToast('Please select outlet and period', 'warning');
                         Utils.hideSpinner();
                         return;
                     }
-                    
+
                     const outlet = state.allOutlets.find(o => o.id === outletId);
                     if (!outlet) {
                         Utils.showToast('Outlet not found', 'error');
                         Utils.hideSpinner();
                         return;
                     }
-                    
+
                     // Check if settlement already exists
                     const existingSettlementRef = doc(db, 'users', state.currentUser.uid, 'outlets', outletId, 'settlements', period);
                     const existingSnap = await getDoc(existingSettlementRef);
@@ -10513,18 +10496,16 @@ class AppController {
                     salesSnapshot.forEach(doc => {
                         const sale = doc.data();
                         if (sale.date >= startDateStr && sale.date <= endDateStr) {
-                            const subtotal = sale.quantity * sale.price;
-                            const discounted = subtotal * (1 - (sale.discount || 0) / 100);
-                            const saleTotal = discounted * (1 + (sale.tax || 0) / 100);
-                            
+                            // Use canonical getSaleTotal so settlement matches dashboard and PDF
+                            const saleTotal = getSaleTotal(sale);
+
                             totalSalesValue += saleTotal;
-                            
-                            // Get COGS for this sale
+
                             const product = state.allProducts.find(p => p.name === sale.product);
                             if (product) {
-                                costOfGoodsSold += sale.quantity * product.cost;
+                                costOfGoodsSold += (parseFloat(sale.quantity) || 0) * product.cost;
                             }
-                            
+
                             salesList.push({
                                 id: doc.id,
                                 date: sale.date,
