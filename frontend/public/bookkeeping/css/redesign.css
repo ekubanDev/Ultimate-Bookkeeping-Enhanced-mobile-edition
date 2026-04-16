@@ -1,0 +1,1213 @@
+/* ============================================================
+   REDESIGN.CSS — Modern Sidebar Layout + Visual Refresh
+   Ultimate Bookkeeping — 2025
+   ============================================================ */
+
+/* ── 0. Design Tokens ────────────────────────────────────────── */
+:root {
+    --rd-sidebar-w:        256px;
+    --rd-topbar-h:         60px;
+    --rd-sidebar-bg:       #0F172A;
+    --rd-sidebar-hover:    rgba(255, 255, 255, 0.06);
+    --rd-sidebar-active:   rgba(30, 58, 138, 0.70);
+    --rd-sidebar-accent:   #D97706;
+    --rd-topbar-bg:        #ffffff;
+    --rd-topbar-border:    #E2E8F0;
+    --rd-content-bg:       #F1F5F9;
+    --rd-card-radius:      14px;
+    --rd-shadow-card:      0 1px 3px rgba(15,23,42,0.06), 0 4px 16px rgba(15,23,42,0.04);
+    --rd-shadow-hover:     0 4px 24px rgba(15,23,42,0.10);
+    --rd-table-header-bg:  #F8FAFC;
+    --rd-nav-font:         'Poppins', 'Open Sans', sans-serif;
+}
+
+/* ── 1. Base ──────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; }
+
+html { scroll-behavior: smooth; }
+
+body {
+    background: var(--rd-content-bg);
+    font-family: 'Open Sans', 'Segoe UI', sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+/* ── 2. Sidebar (desktop ≥768px) ──────────────────────────────── */
+@media (min-width: 768px) {
+    #mobile-sidebar {
+        position: fixed !important;
+        top: 0;
+        left: 0;
+        width: var(--rd-sidebar-w) !important;
+        height: 100dvh !important;
+        background: var(--rd-sidebar-bg) !important;
+        overflow-y: auto;
+        overflow-x: hidden;
+        z-index: 1600 !important;
+        box-shadow: 1px 0 0 rgba(255,255,255,0.05), 2px 0 12px rgba(0,0,0,0.12) !important;
+        display: flex !important;
+        flex-direction: column;
+        left: 0 !important;   /* override the -300px default */
+        transition: none !important;
+        scrollbar-width: thin;
+        scrollbar-color: rgba(255,255,255,0.1) transparent;
+    }
+
+    /* No dark overlay on desktop */
+    #sidebar-overlay { display: none !important; }
+    .sidebar-overlay  { display: none !important; }
+
+    /* Topbar — slim fixed bar right of sidebar */
+    header {
+        position: fixed !important;
+        top: 0;
+        left: var(--rd-sidebar-w);
+        right: 0;
+        height: var(--rd-topbar-h);
+        padding: 0 1.5rem !important;
+        background: var(--rd-topbar-bg) !important;
+        border-bottom: 1px solid var(--rd-topbar-border);
+        box-shadow: 0 1px 6px rgba(15,23,42,0.06) !important;
+        color: #1e293b;
+        display: flex !important;
+        align-items: center;
+        gap: 1rem;
+        z-index: 1500 !important;
+        overflow: visible !important;    /* let dropdown escape the header box */
+        text-align: left !important;
+    }
+
+    /* Content area — offset for sidebar + topbar */
+    #sections-container {
+        margin-left: var(--rd-sidebar-w) !important;
+        padding-top: var(--rd-topbar-h) !important;
+        min-height: 100dvh;
+        background: var(--rd-content-bg);
+    }
+
+    section {
+        padding: 2rem 2.5rem !important;
+        max-width: 1600px !important;
+    }
+}
+
+/* ── 3. Sidebar brand / header area ──────────────────────────── */
+.mobile-sidebar .sidebar-header {
+    height: var(--rd-topbar-h) !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+    padding: 0 1.25rem !important;
+    background: rgba(0,0,0,0.18) !important;
+    border-bottom: 1px solid rgba(255,255,255,0.07) !important;
+    flex-shrink: 0;
+}
+
+.sidebar-brand {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    text-decoration: none;
+}
+
+.sidebar-brand i {
+    font-size: 1.25rem;
+    color: var(--rd-sidebar-accent);
+}
+
+.sidebar-brand span {
+    font-family: var(--rd-nav-font);
+    font-size: 1.05rem;
+    font-weight: 600;
+    color: rgba(255,255,255,0.95);
+    letter-spacing: -0.02em;
+}
+
+.sidebar-brand strong {
+    color: var(--rd-sidebar-accent);
+    font-weight: 700;
+}
+
+/* Hide close button on desktop, show on mobile */
+@media (min-width: 768px) {
+    .mobile-sidebar .close-btn { display: none !important; }
+}
+
+/* ── 4. Sidebar nav ──────────────────────────────────────────── */
+.mobile-sidebar nav {
+    flex: 1;
+    background: transparent !important;
+    box-shadow: none !important;
+    padding: 0.75rem 0 !important;
+    border-radius: 0 !important;
+    overflow-y: auto;
+    position: static !important;
+}
+
+.mobile-sidebar nav ul {
+    flex-direction: column !important;
+    flex-wrap: nowrap !important;
+    gap: 0 !important;
+    justify-content: flex-start !important;
+    padding: 0 0.75rem !important;
+    list-style: none;
+}
+
+.mobile-sidebar nav ul .nav-group-label {
+    display: block !important;
+    font-size: 0.6rem;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: rgba(255,255,255,0.28);
+    padding: 1.1rem 0.75rem 0.35rem;
+    margin-top: 0.1rem;
+}
+
+.mobile-sidebar nav ul li:not(.nav-group-label) {
+    display: flex !important;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.58rem 0.75rem !important;
+    border-radius: 8px !important;
+    color: rgba(255,255,255,0.62) !important;
+    font-size: 0.875rem !important;
+    font-weight: 400;
+    border-bottom: none !important;
+    border-left: 2px solid transparent;
+    margin: 1px 0 !important;
+    cursor: pointer;
+    transition: background 0.13s ease, color 0.13s ease !important;
+    white-space: nowrap;
+    overflow: hidden;
+}
+
+.mobile-sidebar nav ul li:not(.nav-group-label):hover {
+    background: var(--rd-sidebar-hover) !important;
+    color: rgba(255,255,255,0.95) !important;
+}
+
+.mobile-sidebar nav ul li.active {
+    background: var(--rd-sidebar-active) !important;
+    color: #ffffff !important;
+    border-left-color: var(--rd-sidebar-accent) !important;
+    font-weight: 500;
+}
+
+.mobile-sidebar nav ul li i {
+    width: 16px !important;
+    font-size: 0.85rem !important;
+    text-align: center;
+    flex-shrink: 0;
+    margin-right: 0 !important;
+    opacity: 0.75;
+}
+
+.mobile-sidebar nav ul li.active i,
+.mobile-sidebar nav ul li:hover i {
+    opacity: 1;
+}
+
+/* ── 5. Topbar internals ─────────────────────────────────────── */
+@media (min-width: 768px) {
+    /* Hide big app title + tagline in topbar */
+    header h1,
+    header .header-content > p {
+        display: none !important;
+    }
+
+    /* Page title badge */
+    .topbar-page-title {
+        display: block;
+        font-family: var(--rd-nav-font);
+        font-size: 0.95rem;
+        font-weight: 600;
+        color: #0F172A;
+        white-space: nowrap;
+        flex-shrink: 0;
+        margin-right: 0.5rem;
+    }
+
+    /* Header-content becomes topbar row — must NEVER wrap */
+    .header-content {
+        width: 100% !important;
+        display: flex !important;
+        align-items: center !important;
+        gap: 1rem !important;
+        flex-wrap: nowrap !important;
+        min-width: 0;
+        overflow: hidden;       /* clip overflow rather than let it push height */
+    }
+
+    /* Auth-controls row must also stay on one line */
+    #auth-controls {
+        flex-wrap: nowrap !important;
+        min-width: 0;
+        overflow: hidden;
+    }
+
+    /* Connection status — small pill */
+    #connection-status {
+        font-size: 0.72rem !important;
+        padding: 0.2rem 0.6rem;
+        border-radius: 999px;
+        background: #F1F5F9;
+        color: #475569;
+        white-space: nowrap;
+        flex-shrink: 0;
+    }
+
+    /* Search bar in topbar */
+    .global-search-wrap {
+        flex: 1 !important;
+        margin: 0 !important;
+        max-width: 420px !important;
+        position: relative !important;   /* anchor the dropdown */
+    }
+
+    .global-search-field {
+        position: relative !important;
+    }
+
+    .global-search-input {
+        width: 100% !important;
+        background: #F1F5F9 !important;
+        color: #1e293b !important;
+        border: 1.5px solid #E2E8F0 !important;
+        padding: 0.52rem 2.4rem 0.52rem 2.4rem !important;
+        border-radius: 8px !important;
+        font-size: 0.875rem !important;
+        font-family: inherit !important;
+        transition: border-color 0.15s, box-shadow 0.15s !important;
+    }
+
+    .global-search-input::placeholder { color: #94a3b8 !important; }
+
+    .global-search-input:focus {
+        background: white !important;
+        border-color: #1E3A8A !important;
+        box-shadow: 0 0 0 3px rgba(30,58,138,0.1) !important;
+        outline: none !important;
+    }
+
+    /* icon — left side */
+    .global-search-icon {
+        position: absolute !important;
+        left: 0.75rem !important;
+        right: auto !important;
+        top: 50% !important;
+        transform: translateY(-50%) !important;
+        color: #94a3b8 !important;
+        font-size: 0.82rem !important;
+        pointer-events: none !important;
+    }
+
+    /* Dropdown results — fixed so it escapes all stacking contexts */
+    .global-search-results {
+        position: fixed !important;
+        background: #ffffff !important;
+        border: 1px solid #E2E8F0 !important;
+        border-radius: 10px !important;
+        box-shadow: 0 8px 32px rgba(15,23,42,0.14) !important;
+        max-height: 420px !important;
+        overflow-y: auto !important;
+        z-index: 99999 !important;
+        font-size: 0.875rem !important;
+    }
+
+    /* Results section header */
+    .global-search-results .search-group-label {
+        padding: 0.6rem 1rem 0.3rem !important;
+        font-size: 0.72rem !important;
+        font-weight: 700 !important;
+        letter-spacing: 0.06em !important;
+        text-transform: uppercase !important;
+        color: #94a3b8 !important;
+        border-top: 1px solid #F1F5F9 !important;
+    }
+    .global-search-results .search-group-label:first-child {
+        border-top: none !important;
+    }
+
+    /* Individual result row */
+    .global-search-results .search-result-item {
+        padding: 0.55rem 1rem !important;
+        cursor: pointer !important;
+        border-radius: 0 !important;
+        transition: background 0.1s !important;
+        color: #1e293b !important;
+        line-height: 1.4 !important;
+    }
+    .global-search-results .search-result-item:hover {
+        background: #F1F5F9 !important;
+    }
+    .global-search-results .search-result-item strong {
+        font-weight: 600 !important;
+        color: #0F172A !important;
+    }
+    .global-search-results .search-result-item .search-meta {
+        font-size: 0.78rem !important;
+        color: #64748B !important;
+    }
+
+    /* No-results row */
+    .global-search-results .search-no-results {
+        padding: 1.25rem 1rem !important;
+        text-align: center !important;
+        color: #94a3b8 !important;
+        font-size: 0.85rem !important;
+    }
+
+    /* More indicator */
+    .global-search-results .search-more {
+        padding: 0.35rem 1rem 0.55rem !important;
+        font-size: 0.78rem !important;
+        color: #94a3b8 !important;
+    }
+
+    /* Auth controls row */
+    #auth-controls {
+        flex-direction: row !important;
+        margin-top: 0 !important;
+        font-size: 0.8rem !important;
+        gap: 0.5rem !important;
+        flex-shrink: 1;         /* allow compression on narrow viewports; tablets override to 1 explicitly */
+        min-width: 0;
+        align-items: center !important;
+        justify-content: flex-end !important;
+    }
+
+    #user-email {
+        color: #475569;
+        font-size: 0.8rem;
+    }
+
+    #outlet-context {
+        font-size: 0.75rem !important;
+        background: #F1F5F9;
+        padding: 0.2rem 0.6rem;
+        border-radius: 999px;
+        color: #475569;
+    }
+
+    #user-role-display {
+        font-size: 0.75rem;
+        background: rgba(30,58,138,0.1);
+        color: #1E3A8A;
+        padding: 0.2rem 0.6rem;
+        border-radius: 999px;
+        font-weight: 600;
+    }
+
+    .header-select {
+        background: #F1F5F9 !important;
+        color: #475569 !important;
+        border: 1px solid #E2E8F0 !important;
+        border-radius: 6px !important;
+        font-size: 0.78rem !important;
+        padding: 0.25rem 0.5rem !important;
+    }
+
+    .btn-logout {
+        border-radius: 8px !important;
+        font-size: 0.78rem !important;
+        padding: 0.3rem 0.85rem !important;
+        background: #DC2626 !important;
+        font-weight: 600 !important;
+    }
+
+    /* Hamburger hidden — sidebar is always present */
+    .hamburger-btn {
+        display: none !important;
+    }
+}
+
+/* Page title hidden on mobile */
+@media (max-width: 767px) {
+    .topbar-page-title { display: none !important; }
+}
+
+/* ── Tablet portrait (768–899px): aggressive topbar compression ── */
+@media (min-width: 768px) and (max-width: 899px) {
+    /* Shrink sidebar slightly to reclaim space in the topbar */
+    #mobile-sidebar     { width: 200px !important; }
+    header              { left: 200px !important; padding: 0 0.75rem !important; }
+    #sections-container { margin-left: 200px !important; }
+
+    /* Strip decorative / secondary info — nothing that drives navigation */
+    #connection-status          { display: none !important; }
+    #outlet-context             { display: none !important; }
+    #user-email                 { display: none !important; }
+
+    /* Auth-controls: compress, don't wrap */
+    #auth-controls {
+        flex-shrink: 1 !important;
+        min-width: 0 !important;
+        gap: 0.3rem !important;
+        overflow: hidden;
+    }
+
+    /* Role badge: fixed width, truncate */
+    #user-role-display {
+        max-width: 64px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        flex-shrink: 0;
+    }
+
+    /* Language select: flag + minimal padding (≈52px) */
+    .header-select {
+        max-width: 54px !important;
+        padding-left: 0.25rem !important;
+        padding-right: 0.1rem !important;
+    }
+
+    /* Logout: icon-only to save ~50px */
+    .btn-logout span,
+    .btn-logout {
+        font-size: 0 !important;        /* hide text */
+        padding: 0.3rem 0.5rem !important;
+        width: 32px !important;
+        min-width: 0 !important;
+    }
+    .btn-logout::before {
+        content: "\f2f5";               /* fa-sign-out-alt unicode */
+        font-family: "Font Awesome 6 Free";
+        font-weight: 900;
+        font-size: 0.8rem;
+    }
+
+    /* Search: narrower */
+    .global-search-wrap { max-width: 160px !important; }
+
+    /* Page title: truncate long section names */
+    .topbar-page-title {
+        font-size: 0.85rem !important;
+        max-width: 90px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        margin-right: 0 !important;
+    }
+}
+
+/* ── Tablet landscape (900–1024px): light compression ─────────── */
+@media (min-width: 900px) and (max-width: 1024px) {
+    #connection-status          { display: none !important; }
+    #outlet-context             { display: none !important; }
+    #user-email                 { display: none !important; }
+
+    #auth-controls {
+        flex-shrink: 1 !important;
+        min-width: 0 !important;
+        gap: 0.4rem !important;
+    }
+
+    .global-search-wrap { max-width: 240px !important; }
+}
+
+/* ── 6. Cards ────────────────────────────────────────────────── */
+.card {
+    background: #ffffff !important;
+    border-radius: var(--rd-card-radius) !important;
+    box-shadow: var(--rd-shadow-card) !important;
+    border: 1px solid #E9EEF5 !important;
+    padding: 1.5rem !important;
+    margin-bottom: 1.5rem !important;
+    transition: box-shadow 0.2s ease !important;
+    position: relative;       /* establish stacking context so card buttons */
+    z-index: 1;               /* paint above any sibling pseudo-elements */
+}
+
+.card:hover { box-shadow: var(--rd-shadow-hover) !important; }
+
+.card h2, .card h3 {
+    font-family: var(--rd-nav-font);
+    font-weight: 600;
+    color: #0F172A;
+    letter-spacing: -0.02em;
+}
+
+/* ── 7. Metric cards ─────────────────────────────────────────── */
+.metric {
+    background: #ffffff !important;
+    border-radius: var(--rd-card-radius) !important;
+    box-shadow: var(--rd-shadow-card) !important;
+    border: 1px solid #E9EEF5 !important;
+    padding: 1.25rem 1.5rem !important;
+    text-align: left !important;
+    transition: box-shadow 0.2s ease, transform 0.2s ease !important;
+    position: relative;
+    overflow: hidden;
+}
+
+.metric::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 3px;
+    background: var(--ds-metric-stripe, linear-gradient(90deg, #1E3A8A 0%, #D97706 100%));
+    border-radius: var(--rd-card-radius) var(--rd-card-radius) 0 0;
+}
+
+.metric:hover {
+    transform: translateY(-2px) !important;
+    box-shadow: var(--rd-shadow-hover) !important;
+}
+
+.metric h3 {
+    font-size: 0.72rem !important;
+    font-weight: 700 !important;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    color: #64748B !important;
+    margin-bottom: 0.5rem !important;
+    font-family: 'Open Sans', sans-serif;
+}
+
+.metric p {
+    font-size: 1.65rem !important;
+    font-weight: 700 !important;
+    color: #0F172A !important;
+    letter-spacing: -0.03em;
+    line-height: 1.2;
+    font-family: var(--rd-nav-font);
+}
+
+.dashboard-metrics {
+    display: grid !important;
+    grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)) !important;
+    gap: 1.25rem !important;
+    margin-bottom: 2rem !important;
+}
+
+/* ── 8. Tables ───────────────────────────────────────────────── */
+.table-container {
+    border-radius: var(--rd-card-radius) !important;
+    border: 1px solid #E9EEF5 !important;
+    overflow-x: auto !important;        /* horizontal scroll on narrow screens */
+    overflow-y: visible !important;     /* don't clip vertical content */
+    -webkit-overflow-scrolling: touch;
+    box-shadow: var(--rd-shadow-card) !important;
+    background: #ffffff;
+}
+
+table {
+    background: #ffffff !important;
+    border-collapse: separate !important;
+    border-spacing: 0 !important;
+    width: 100%;
+}
+
+thead { background: var(--rd-table-header-bg, #F8FAFC) !important; }
+
+th {
+    background: var(--rd-table-header-bg, #F8FAFC) !important; /* must be opaque — transparent th causes invisible click blocker */
+    font-size: 0.7rem !important;
+    font-weight: 700 !important;
+    letter-spacing: 0.07em !important;
+    text-transform: uppercase !important;
+    color: #64748B !important;
+    padding: 0.85rem 1rem !important;
+    border-bottom: 1px solid #E2E8F0 !important;
+    white-space: nowrap;
+    position: sticky;
+    top: 0;
+    z-index: 2;
+}
+
+td {
+    padding: 0.8rem 1rem !important;
+    font-size: 0.875rem !important;
+    color: #1e293b !important;
+    border-bottom: 1px solid #F1F5F9 !important;
+    vertical-align: middle;
+    position: relative;     /* tbody td above sticky thead in local stacking */
+    z-index: 3;
+}
+
+tr:last-child td { border-bottom: none !important; }
+tr:nth-child(even) { background-color: transparent !important; }
+tbody tr:hover td { background-color: #F8FAFC !important; }
+
+/* Action buttons in table cells */
+td.actions {
+    white-space: nowrap;
+    vertical-align: middle !important;
+    cursor: pointer;            /* pointer on cell — browsers resolve 'default' as I-beam in table context */
+    user-select: none;
+}
+
+td.actions button {
+    width: 32px !important;
+    height: 32px !important;
+    padding: 0 !important;
+    min-width: 32px;
+    border-radius: 8px !important;
+    font-size: 0.8rem !important;
+    background: #F1F5F9 !important;
+    color: #475569 !important;
+    border: 1px solid #E2E8F0 !important;
+    display: inline-flex !important;    /* inline-flex — safe inside td */
+    align-items: center;
+    justify-content: center;
+    transition: all 0.13s ease !important;
+    cursor: pointer !important;         /* always show hand cursor */
+    vertical-align: middle;
+    margin: 0 3px 0 0;
+    position: relative;                 /* own stacking context so hits land here */
+    z-index: 1;
+}
+td.actions button:last-child { margin-right: 0; }
+
+td.actions button i { margin-right: 0 !important; }
+
+td.actions button:hover {
+    background: #1E3A8A !important;
+    color: white !important;
+    border-color: #1E3A8A !important;
+    transform: none !important;
+}
+
+td.actions button.danger {
+    background: #FEF2F2 !important;
+    color: #DC2626 !important;
+    border-color: #FCA5A5 !important;
+}
+td.actions button.danger:hover {
+    background: #DC2626 !important;
+    color: white !important;
+    border-color: #DC2626 !important;
+}
+
+td.actions button.info {
+    background: #F0F9FF !important;
+    color: #0369A1 !important;
+    border-color: #BAE6FD !important;
+}
+td.actions button.info:hover {
+    background: #0369A1 !important;
+    color: white !important;
+    border-color: #0369A1 !important;
+}
+
+/* ── 9. Buttons ──────────────────────────────────────────────── */
+button,
+.btn {
+    font-family: 'Open Sans', sans-serif !important;
+    font-weight: 600 !important;
+    font-size: 0.875rem !important;
+    border-radius: 8px !important;
+    padding: 0.58rem 1.1rem !important;
+    letter-spacing: 0.01em;
+    transition: background 0.13s ease, box-shadow 0.13s ease, transform 0.1s ease !important;
+    cursor: pointer !important;     /* always hand cursor — never I-beam */
+}
+
+/* Primary form submit */
+form button[type="submit"] {
+    background: #1E3A8A !important;
+    color: white !important;
+    border: none !important;
+    width: 100%;
+    padding: 0.75rem !important;
+    font-size: 0.9rem !important;
+    border-radius: 10px !important;
+    margin-top: 0.25rem;
+}
+form button[type="submit"]:hover {
+    background: #1e40af !important;
+    box-shadow: 0 4px 14px rgba(30,58,138,0.3) !important;
+    transform: translateY(-1px);
+}
+
+/* Standalone primary buttons */
+.btn-primary,
+button.btn-primary {
+    background: #1E3A8A !important;
+    color: white !important;
+    border: none !important;
+}
+.btn-primary:hover { background: #1e40af !important; }
+
+/* Danger */
+button.danger, .btn-danger {
+    background: #DC2626 !important;
+    color: white !important;
+    border: none !important;
+}
+button.danger:hover, .btn-danger:hover { background: #B91C1C !important; }
+
+/* Secondary */
+.btn-secondary {
+    background: #F1F5F9 !important;
+    color: #475569 !important;
+    border: 1px solid #E2E8F0 !important;
+}
+.btn-secondary:hover { background: #E2E8F0 !important; }
+
+/* Outline */
+.btn-outline {
+    background: transparent !important;
+    border: 1.5px solid #1E3A8A !important;
+    color: #1E3A8A !important;
+}
+.btn-outline:hover { background: rgba(30,58,138,0.06) !important; }
+
+/* Ghost */
+.btn-ghost {
+    background: transparent !important;
+    color: #475569 !important;
+    border: none !important;
+}
+.btn-ghost:hover { background: #F1F5F9 !important; }
+
+/* Small */
+.btn-sm { padding: 0.3rem 0.7rem !important; font-size: 0.8rem !important; border-radius: 6px !important; }
+
+/* ── 10. Forms ───────────────────────────────────────────────── */
+input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="hidden"]),
+select,
+textarea {
+    border: 1.5px solid #E2E8F0 !important;
+    border-radius: 8px !important;
+    background: #F8FAFC !important;
+    font-size: 0.9rem !important;
+    padding: 0.65rem 0.85rem !important;
+    transition: border-color 0.15s, box-shadow 0.15s, background 0.15s !important;
+    color: #1e293b !important;
+}
+
+input:focus, select:focus, textarea:focus {
+    border-color: #1E3A8A !important;
+    background: white !important;
+    box-shadow: 0 0 0 3px rgba(30,58,138,0.1) !important;
+    outline: none !important;
+}
+
+label {
+    font-size: 0.8rem !important;
+    font-weight: 600 !important;
+    color: #374151 !important;
+    letter-spacing: 0.01em;
+}
+
+/* ── 11. Modals ──────────────────────────────────────────────── */
+.modal-content {
+    border-radius: 18px !important;
+    padding: 2rem !important;
+    box-shadow: 0 25px 80px rgba(0,0,0,0.22) !important;
+    border: 1px solid #E9EEF5 !important;
+}
+
+.modal-content h3 {
+    font-family: var(--rd-nav-font) !important;
+    font-size: 1.15rem !important;
+    font-weight: 600 !important;
+    color: #0F172A !important;
+    letter-spacing: -0.02em;
+}
+
+.modal-content .close {
+    border-radius: 8px !important;
+}
+
+/* Bottom-sheet on mobile */
+@media (max-width: 640px) {
+    .modal {
+        align-items: flex-end !important;
+    }
+    .modal-content {
+        margin: 0 !important;
+        width: 100% !important;
+        max-width: 100% !important;
+        border-radius: 20px 20px 0 0 !important;
+        max-height: 90dvh !important;
+        padding: 1.5rem 1.25rem !important;
+        animation: sheetSlideUp 0.28s cubic-bezier(0.34,1.2,0.64,1) !important;
+    }
+    @keyframes sheetSlideUp {
+        from { transform: translateY(100%); opacity: 0.6; }
+        to   { transform: translateY(0);   opacity: 1; }
+    }
+    /* Pull handle */
+    .modal-content::before {
+        content: '';
+        display: block;
+        width: 36px;
+        height: 4px;
+        background: #CBD5E1;
+        border-radius: 2px;
+        margin: -0.5rem auto 1rem;
+    }
+}
+
+/* ── 12. Login / Register modals ─────────────────────────────── */
+#login-modal,
+#register-modal {
+    background: linear-gradient(135deg, #0F172A 0%, #1E3A8A 70%, #1e40af 100%) !important;
+    align-items: center !important;
+    justify-content: center !important;
+}
+
+#login-modal .modal-content,
+#register-modal .modal-content {
+    max-width: 400px !important;
+    width: 92% !important;
+    border-radius: 20px !important;
+    padding: 2.5rem 2rem !important;
+    box-shadow: 0 40px 100px rgba(0,0,0,0.45) !important;
+    animation: authCardIn 0.4s cubic-bezier(0.34,1.2,0.64,1) both !important;
+    border: 1px solid rgba(255,255,255,0.08) !important;
+    position: relative;
+    overflow: hidden;
+}
+
+#login-modal .modal-content::after,
+#register-modal .modal-content::after {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 4px;
+    background: linear-gradient(90deg, #1E3A8A, #D97706);
+    border-radius: 20px 20px 0 0;
+}
+
+@keyframes authCardIn {
+    from { opacity: 0; transform: scale(0.92) translateY(20px); }
+    to   { opacity: 1; transform: scale(1)    translateY(0); }
+}
+
+#login-modal .modal-content h3,
+#register-modal .modal-content h3 {
+    font-size: 1.5rem !important;
+    text-align: center !important;
+    margin-bottom: 0.35rem !important;
+}
+
+#login-modal .modal-content p,
+#register-modal .modal-content p {
+    text-align: center;
+    color: #64748B;
+    margin-bottom: 1.5rem;
+    font-size: 0.9rem;
+}
+
+/* Auth form submit */
+#login-form button[type="submit"],
+#register-form button[type="submit"] {
+    background: linear-gradient(135deg, #1E3A8A, #1e40af) !important;
+    font-size: 0.95rem !important;
+    padding: 0.8rem !important;
+    border-radius: 10px !important;
+    letter-spacing: 0.02em;
+}
+
+/* ── 13. Sales group cards ───────────────────────────────────── */
+.sales-group {
+    background: white;
+    border-radius: 10px !important;
+    border: 1px solid #E9EEF5 !important;
+    box-shadow: var(--rd-shadow-card) !important;
+    margin-bottom: 0.85rem !important;
+    overflow: hidden;
+}
+
+.sales-group-header {
+    background: #F8FAFC !important;
+    padding: 0.85rem 1.1rem !important;
+    font-weight: 600;
+    color: #0F172A;
+    border-radius: 10px 10px 0 0;
+    font-size: 0.9rem;
+}
+
+.sales-group-header:hover { background: #F1F5F9 !important; }
+
+/* ── 14. Pagination ──────────────────────────────────────────── */
+.pagination {
+    gap: 0.4rem !important;
+    margin-top: 1.25rem !important;
+}
+
+.pagination button {
+    border-radius: 8px !important;
+    padding: 0.42rem 0.85rem !important;
+    border: 1.5px solid #E2E8F0 !important;
+    background: white !important;
+    color: #475569 !important;
+    font-size: 0.85rem !important;
+    font-weight: 500;
+    width: auto !important;
+    height: auto !important;
+    min-width: 36px;
+}
+
+.pagination button:hover:not(:disabled) {
+    border-color: #1E3A8A !important;
+    background: #EFF4FF !important;
+    color: #1E3A8A !important;
+    box-shadow: none !important;
+}
+
+.pagination button.active {
+    background: #1E3A8A !important;
+    color: white !important;
+    border-color: #1E3A8A !important;
+}
+
+/* ── 15. Toasts ──────────────────────────────────────────────── */
+.toast {
+    border-radius: 12px !important;
+    box-shadow: 0 8px 32px rgba(15,23,42,0.14) !important;
+    padding: 0.9rem 1.25rem !important;
+}
+
+/* ── 16. Section headings ────────────────────────────────────── */
+section > h2, section > .card > h2 {
+    font-family: var(--rd-nav-font);
+    font-size: 1.25rem;
+    font-weight: 700;
+    color: #0F172A;
+    letter-spacing: -0.02em;
+    margin-bottom: 1.5rem;
+}
+
+/* ── 17. Filter bars ─────────────────────────────────────────── */
+.filters {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    align-items: center;
+    margin-bottom: 1.25rem !important;
+}
+
+.filters input[type="search"],
+.filters input[type="text"],
+.filters select {
+    min-width: 160px;
+    font-size: 0.875rem !important;
+    padding: 0.5rem 0.85rem !important;
+}
+
+/* ── 18. Mobile sidebar (drawer) ─────────────────────────────── */
+@media (max-width: 767px) {
+    /* Sidebar is a drawer — keep existing slide-in */
+    #mobile-sidebar {
+        background: var(--rd-sidebar-bg) !important;
+        width: 285px !important;
+    }
+
+    .mobile-sidebar .sidebar-header {
+        display: flex !important;
+    }
+
+    .mobile-sidebar nav ul {
+        flex-direction: column !important;
+        padding: 0.5rem 0.75rem !important;
+    }
+
+    .mobile-sidebar nav ul .nav-group-label {
+        display: block !important;
+        font-size: 0.6rem;
+        font-weight: 700;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        color: rgba(255,255,255,0.28);
+        padding: 0.9rem 0.75rem 0.3rem;
+    }
+
+    .mobile-sidebar nav ul li:not(.nav-group-label) {
+        display: flex !important;
+        align-items: center;
+        gap: 0.8rem;
+        padding: 0.65rem 0.75rem !important;
+        border-radius: 8px !important;
+        color: rgba(255,255,255,0.7) !important;
+        font-size: 0.9rem !important;
+        border-bottom: none !important;
+        border-left: 2px solid transparent;
+        margin: 1px 0 !important;
+    }
+
+    .mobile-sidebar nav ul li:not(.nav-group-label):hover {
+        background: rgba(255,255,255,0.07) !important;
+        color: white !important;
+    }
+
+    .mobile-sidebar nav ul li.active {
+        background: rgba(30,58,138,0.65) !important;
+        color: white !important;
+        border-left-color: var(--rd-sidebar-accent) !important;
+        font-weight: 500;
+    }
+
+    .mobile-sidebar nav ul li i {
+        width: 18px !important;
+        font-size: 0.95rem !important;
+        text-align: center;
+        margin-right: 0 !important;
+        flex-shrink: 0;
+    }
+
+    /* Mobile header */
+    header {
+        background: linear-gradient(135deg, #0F172A 0%, #1E3A8A 100%) !important;
+    }
+}
+
+/* ── 19. Enhanced bottom nav (mobile) ────────────────────────── */
+@media (max-width: 767px) {
+    .bottom-nav {
+        height: 62px !important;
+        background: #0F172A !important;
+        border-top: 1px solid rgba(255,255,255,0.08) !important;
+        box-shadow: 0 -4px 20px rgba(0,0,0,0.18) !important;
+    }
+
+    .bottom-nav-item {
+        font-size: 0.65rem !important;
+        font-weight: 500;
+        color: rgba(255,255,255,0.42) !important;
+        gap: 3px !important;
+        padding: 8px 4px 6px !important;
+        border-radius: 0;
+        min-height: 56px !important;
+    }
+
+    .bottom-nav-item i { font-size: 1.18rem !important; }
+
+    .bottom-nav-item.active {
+        color: var(--rd-sidebar-accent) !important;
+    }
+
+    .bottom-nav-item:hover {
+        background: none !important;
+        color: rgba(255,255,255,0.7) !important;
+    }
+
+    .bottom-nav-item.active:hover {
+        color: var(--rd-sidebar-accent) !important;
+    }
+}
+
+/* ── 20. Spinner overlay ─────────────────────────────────────── */
+.spinner-overlay {
+    backdrop-filter: blur(4px);
+    background: rgba(15,23,42,0.4) !important;
+}
+
+.spinner {
+    width: 44px !important;
+    height: 44px !important;
+    border-width: 3px !important;
+    border-top-color: #1E3A8A !important;
+    border-radius: 50%;
+}
+
+/* ── 21. Confirm dialog ──────────────────────────────────────── */
+.confirm-dialog {
+    border-radius: 18px !important;
+    box-shadow: 0 25px 80px rgba(0,0,0,0.25) !important;
+    padding: 2rem !important;
+}
+
+/* ── 22. Stacking context isolation ─────────────────────────── */
+
+/* Enhanced dashboard — isolate all internal stacking contexts
+   (metric card transforms, chart canvases, etc.) so they can't
+   bleed above elements outside #dashboard. */
+#dashboard.enhanced-dashboard {
+    isolation: isolate;
+}
+
+/* Metric cards create stacking contexts via overflow:hidden +
+   position:relative. Scoping to the isolated #dashboard ensures
+   they never compete with the header or its dropdown at root level. */
+.metric {
+    isolation: isolate;
+}
+
+/* AI header launcher replaced by FAB — never show in header */
+#ai-chat-launcher-header { display: none !important; }
+
+/* Ensure the global search dropdown is always painted at root
+   stacking context level with the highest possible z-index. */
+#global-search-results {
+    position: fixed !important;
+    z-index: 999999 !important;
+}
+
+/* ── 22. Empty states ────────────────────────────────────────── */
+.empty-state {
+    padding: 3rem 1.5rem !important;
+}
+
+.empty-state__icon {
+    width: 72px !important;
+    height: 72px !important;
+    font-size: 1.75rem !important;
+    background: #F1F5F9 !important;
+    color: #94A3B8 !important;
+    border-radius: 20px !important;
+    margin-bottom: 1.25rem !important;
+}
+
+.empty-state__title {
+    font-family: var(--rd-nav-font) !important;
+    font-size: 1.05rem !important;
+    font-weight: 600 !important;
+    color: #1e293b !important;
+}
+
+.empty-state__action {
+    background: #1E3A8A !important;
+    border-radius: 8px !important;
+    color: white !important;
+    padding: 0.6rem 1.5rem !important;
+    font-size: 0.875rem !important;
+    font-weight: 600 !important;
+    border: none !important;
+    width: auto !important;
+}
+
+/* ── 23. Skeleton ────────────────────────────────────────────── */
+.skeleton-cell, .skeleton {
+    border-radius: 6px !important;
+}
+
+/* ── 24. Scrollbars ──────────────────────────────────────────── */
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #CBD5E1; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #94A3B8; }
+
+/* ── 25. Reduced motion ──────────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+        transition-duration: 0.01ms !important;
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+    }
+}
+
+/* ── 26. Focus ring ──────────────────────────────────────────── */
+:focus-visible {
+    outline: 2px solid #1E3A8A;
+    outline-offset: 2px;
+}
+
+/* ── 27. Theme overrides for sidebar bg ──────────────────────── */
+/* Allow per-theme sidebar tinting via --ds-primary */
+[data-theme="modern"] #mobile-sidebar { background: #0d1117 !important; }
+[data-theme="ocean"]  #mobile-sidebar { background: #0c1a2e !important; }
+[data-theme="forest"] #mobile-sidebar { background: #0a1f12 !important; }
+[data-theme="sunset"] #mobile-sidebar { background: #1a0a0a !important; }
+[data-theme="dark"]   #mobile-sidebar { background: #000000 !important; }
+
+/* ── 28. Content section max-width ───────────────────────────── */
+@media (min-width: 1280px) {
+    section { padding: 2.5rem 3rem !important; }
+}

@@ -18,9 +18,38 @@ export const POSProducts = {
         });
     },
 
+    _activeCategory: '',
+
     setProducts(products) {
         this.allProducts = products || [];
+        this._buildCategoryChips();
         this.renderProductList();
+    },
+
+    _buildCategoryChips() {
+        const chipsEl = document.getElementById('pos-categories');
+        if (!chipsEl) return;
+
+        const cats = [...new Set(
+            this.allProducts.map(p => p.category).filter(Boolean)
+        )].sort();
+
+        const allChip = `<button class="pos-category-chip${this._activeCategory === '' ? ' active' : ''}" data-category="" onclick="POSProducts._filterCategory('')">All</button>`;
+        const catChips = cats.map(c =>
+            `<button class="pos-category-chip${this._activeCategory === c ? ' active' : ''}" data-category="${c}" onclick="POSProducts._filterCategory('${c}')">${c}</button>`
+        ).join('');
+
+        chipsEl.innerHTML = allChip + catChips;
+    },
+
+    _filterCategory(cat) {
+        this._activeCategory = cat;
+        // Update chip active states
+        document.querySelectorAll('.pos-category-chip').forEach(btn => {
+            btn.classList.toggle('active', btn.dataset.category === cat);
+        });
+        const searchVal = document.getElementById('product-search')?.value.toLowerCase() || '';
+        this.renderProductList(searchVal);
     },
 
     renderProductList(filter = '') {
@@ -29,7 +58,12 @@ export const POSProducts = {
 
         let products = this.allProducts;
 
-        // Apply filter
+        // Category filter
+        if (this._activeCategory) {
+            products = products.filter(p => p.category === this._activeCategory);
+        }
+
+        // Text filter
         if (filter) {
             products = products.filter(p =>
                 (p.name || '').toLowerCase().includes(filter) ||
@@ -39,18 +73,29 @@ export const POSProducts = {
         }
 
         if (products.length === 0) {
-            container.innerHTML = '<p style="text-align:center;color:#888;padding:1rem 0;">No products found</p>';
+            container.innerHTML = `
+                <div style="grid-column:1/-1;text-align:center;padding:2.5rem 1rem;color:var(--pos-muted,#64748B);">
+                    <i class="fas fa-search" style="font-size:1.5rem;opacity:0.3;display:block;margin-bottom:0.5rem;"></i>
+                    <span style="font-size:0.85rem;font-weight:600;">No products found</span>
+                </div>`;
             return;
         }
 
         container.innerHTML = products.map((p) => {
             const qty = Number(p.quantity || 0);
             const outOfStock = qty <= 0;
-            const onclick = outOfStock ? '' : `onclick="POSProducts.promptForQuantity('${p.id}')"`; // disabled buttons won't fire
+            const isLow = !outOfStock && qty <= 5;
+            const stockClass = outOfStock ? 'out' : isLow ? 'low' : '';
+            const stockIcon = outOfStock ? 'fa-ban' : 'fa-cube';
+            const onclick = outOfStock ? '' : `onclick="POSProducts.promptForQuantity('${p.id}')"`;
             return `
-                <button class="product-btn" type="button" ${onclick} ${outOfStock ? 'disabled' : ''}>
-                    <div class="pos-product-name">${p.name || 'Untitled'}</div>
-                    <small class="pos-product-meta">${POSUI.formatCurrency(p.price || 0)} | Stock: ${qty}</small>
+                <button class="product-btn product-card" type="button" ${onclick} ${outOfStock ? 'disabled' : ''}>
+                    <div class="pos-product-name product-card__name">${p.name || 'Untitled'}</div>
+                    <div class="product-card__price">${POSUI.formatCurrency(p.price || 0)}</div>
+                    <div class="product-card__stock pos-product-meta ${stockClass}">
+                        <i class="fas ${stockIcon}"></i>
+                        ${outOfStock ? 'Out of Stock' : `${qty} in stock`}
+                    </div>
                 </button>
             `;
         }).join('');

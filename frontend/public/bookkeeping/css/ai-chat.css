@@ -15,8 +15,14 @@
     box-sizing: border-box;
 }
 
-#ai-chat-root .ai-chat-fab,
-#ai-chat-root .ai-chat-window {
+/* FAB is always interactive */
+#ai-chat-root .ai-chat-fab {
+    pointer-events: auto !important;
+}
+
+/* Window only intercepts events when visibly open — prevents the
+   invisible 420×600 px panel from blocking content beneath it */
+#ai-chat-root .ai-chat-window.open {
     pointer-events: auto !important;
 }
 

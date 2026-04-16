@@ -16,8 +16,12 @@ export const POSCart = {
 
     setupEventListeners() {
         // Clear cart
-        document.getElementById('clear-cart')?.addEventListener('click', () => {
-            if (confirm('Clear cart?')) {
+        document.getElementById('clear-cart')?.addEventListener('click', async () => {
+            const UX = window.UX;
+            const confirmed = UX
+                ? await UX.confirm({ title: 'Clear Cart', body: 'Remove all items from the cart?', confirmLabel: 'Clear', variant: 'danger' })
+                : confirm('Clear cart?');
+            if (confirmed) {
                 this.cart = [];
                 this.saveCart();
                 this.renderCart();
@@ -82,42 +86,85 @@ export const POSCart = {
         }
     },
 
+    increaseQty(index) {
+        const item = this.cart[index];
+        if (!item) return;
+        const product = (window.POSProducts?.allProducts || []).find(p => p.id === item.id);
+        const maxQty = product ? product.quantity : 9999;
+        if (item.qty < maxQty) {
+            item.qty++;
+            this.saveCart();
+            this.renderCart();
+        } else {
+            POSUI.showNotification('Max stock reached', 'error');
+        }
+    },
+
     renderCart() {
         const container = document.getElementById('cart');
-        const totalEl = document.querySelector('.total');
         const checkoutBtn = document.getElementById('checkout');
-        
+
         if (!container) return;
 
         if (this.cart.length === 0) {
-            container.innerHTML = '<p>Your cart is empty.</p>';
-            totalEl.textContent = 'Total: ₵0.00';
+            container.innerHTML = `
+                <div class="pos-cart-empty">
+                    <i class="fas fa-shopping-basket"></i>
+                    <p>Cart is empty</p>
+                    <small>Tap a product to add it</small>
+                </div>`;
+            this._updateTotals(0, 0);
             if (checkoutBtn) checkoutBtn.disabled = true;
             return;
         }
 
         if (checkoutBtn) checkoutBtn.disabled = false;
 
-        let total = 0;
+        let subtotal = 0;
+        let totalDiscount = 0;
+
         container.innerHTML = this.cart.map((item, index) => {
-            const subtotal = item.price * item.qty - item.discount;
-            total += subtotal;
+            const lineSubtotal = item.price * item.qty;
+            const lineDiscount = Number(item.discount) || 0;
+            const lineTotal = lineSubtotal - lineDiscount;
+            subtotal += lineSubtotal;
+            totalDiscount += lineDiscount;
             return `
-                <div class="cart-item">
-                    <div>
-                        <strong>${item.name}</strong><br>
-                        <small>${POSUI.formatCurrency(item.price)} × ${item.qty} = ${POSUI.formatCurrency(item.price * item.qty)}</small>
-                        ${item.discount > 0 ? `<br><small style="color: green;">-${POSUI.formatCurrency(item.discount)} discount</small>` : ''}
+                <div class="cart-row">
+                    <div class="cart-row__info">
+                        <span class="cart-row__name">${item.name}</span>
+                        <span class="cart-row__unit">${POSUI.formatCurrency(item.price)} ea${lineDiscount > 0 ? ` · <span class="cart-row__discount">−${POSUI.formatCurrency(lineDiscount)}</span>` : ''}</span>
                     </div>
-                    <div class="cart-controls">
-                        <button onclick="POSCart.decreaseQty(${index})" style="background: #e74c3c; color: white;">−</button>
-                        <button onclick="POSCart.removeFromCart(${index})" style="background: #95a5a6; color: white;">🗑️</button>
+                    <div class="cart-qty-stepper">
+                        <button class="qty-btn minus" onclick="POSCart.decreaseQty(${index})">−</button>
+                        <span class="qty-value">${item.qty}</span>
+                        <button class="qty-btn plus" onclick="POSCart.increaseQty(${index})">+</button>
                     </div>
+                    <span class="cart-row__total">${POSUI.formatCurrency(lineTotal)}</span>
+                    <button class="cart-row__remove" onclick="POSCart.removeFromCart(${index})" title="Remove">
+                        <i class="fas fa-times"></i>
+                    </button>
                 </div>
             `;
         }).join('');
 
-        totalEl.textContent = `Total: ${POSUI.formatCurrency(total)}`;
+        this._updateTotals(subtotal, totalDiscount);
+    },
+
+    _updateTotals(subtotal, totalDiscount) {
+        const grandTotal = subtotal - totalDiscount;
+
+        // Modern summary lines
+        const subEl  = document.getElementById('summary-subtotal');
+        const discEl = document.getElementById('summary-discount');
+        const totEl  = document.getElementById('summary-total');
+        if (subEl)  subEl.textContent  = POSUI.formatCurrency(subtotal);
+        if (discEl) discEl.textContent = totalDiscount > 0 ? `−${POSUI.formatCurrency(totalDiscount)}` : '—';
+        if (totEl)  totEl.textContent  = POSUI.formatCurrency(grandTotal);
+
+        // Legacy .total fallback (pos.html old layout / embedded)
+        const legacyEl = document.querySelector('.total');
+        if (legacyEl) legacyEl.textContent = `Total: ${POSUI.formatCurrency(grandTotal)}`;
     },
 
     showCheckoutModal() {

@@ -905,6 +905,181 @@ Provide a helpful, concise response focused on actionable business advice. For i
         logger.error(f"AI chat error: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Chat failed: {str(e)}")
 
+# ==================== PO QUANTITY SUGGESTION ENDPOINT ====================
+
+@api_router.post("/ai/po-suggest")
+async def ai_po_suggest(data: Dict[str, Any], authorization: Optional[str] = Header(None)):
+    """
+    Return AI-recommended order quantities for a list of products.
+    Always responds with structured JSON: {"suggestions": [{"name", "qty", "reason"}]}
+    Falls back to rule-based 45-day velocity if the LLM key is missing.
+    """
+    try:
+        products = data.get("products", [])
+        if not isinstance(products, list) or not products:
+            raise HTTPException(status_code=400, detail="products list is required")
+
+        api_key = os.environ.get("EMERGENT_LLM_KEY")
+
+        # Auth check (reuse same gate as /ai/chat)
+        if ai_chat_auth_enforced():
+            if not ensure_firebase_admin_app():
+                raise HTTPException(status_code=503, detail="Firebase Admin not configured.")
+            try:
+                claims = verify_bearer_id_token(authorization)
+                uid = claims.get("uid") or claims.get("sub") or ""
+                if uid:
+                    check_ai_chat_rate_limit(uid)
+            except ValueError:
+                raise HTTPException(status_code=401, detail="Authentication required.")
+            except PermissionError:
+                raise HTTPException(status_code=429, detail="Too many requests.")
+            except Exception as auth_exc:
+                logger.warning("Firebase token verification failed: %s", auth_exc)
+                raise HTTPException(status_code=401, detail="Invalid or expired token.")
+
+        # Rule-based fallback — uses richer fields when available
+        def rule_based(products):
+            results = []
+            for p in products:
+                # Prefer 30-day rate (more recent) over 90-day average
+                avg_daily = p.get("avgDailySalesLast30d") or p.get("avgDailySales", 0) or 0
+                current   = p.get("currentStock", 0) or 0
+                min_stock = p.get("minStock", 10) or 10
+                trend     = p.get("trend", "stable")
+
+                # Adjust target window by trend: 60d for accelerating, 30d for declining
+                target_days = 60 if trend == "accelerating" else (30 if trend == "declining" else 45)
+                target = math.ceil(avg_daily * target_days)
+                qty = max(int(min_stock), target - int(current))
+                if qty <= 0:
+                    qty = int(min_stock)
+
+                if avg_daily > 0:
+                    reason = (
+                        f"{avg_daily}/day (last 30d) × {target_days} days = {target} target; "
+                        f"{int(current)} in stock; trend: {trend}"
+                    )
+                else:
+                    reason = f"No sales history — using min stock ({int(min_stock)})"
+
+                results.append({"name": p["name"], "qty": qty, "reason": reason, "trend": trend})
+            return results
+
+        if not api_key:
+            return {"suggestions": rule_based(products), "mode": "rule_based"}
+
+        # Build a tightly-scoped system prompt that demands JSON output
+        system_message = (
+            "You are a procurement quantity advisor for a Ghanaian retail business. "
+            "You receive product stock, sales velocity, trend, and day-of-week pattern data. "
+            "Return ONLY a raw JSON array — no markdown, no explanation, no code fences, no extra keys. "
+            "Each object must have exactly these keys: "
+            "\"name\" (string, exact product name), "
+            "\"qty\" (positive integer), "
+            "\"reason\" (one concise sentence explaining the quantity), "
+            "\"trend\" (one of: accelerating, stable, declining). "
+            "Example: [{\"name\":\"Coca Cola\",\"qty\":180,\"reason\":\"3.2/day avg; accelerating trend warrants 60-day cover\",\"trend\":\"accelerating\"}]"
+        )
+
+        lines = []
+        for p in products:
+            trend     = p.get("trend", "stable")
+            avg90     = p.get("avgDailySales", 0)
+            avg30     = p.get("avgDailySalesLast30d", avg90)
+            weekly    = p.get("weeklyPattern", {})
+            peak_day  = max(weekly, key=weekly.get) if weekly else "unknown"
+            peak_val  = weekly.get(peak_day, 0) if weekly else 0
+            data_src  = p.get("dataSource", "none")
+
+            line = (
+                f"- {p['name']}: "
+                f"stock={p.get('currentStock', 0)}, "
+                f"min={p.get('minStock', 10)}, "
+                f"sold_last_90d={p.get('last90dQty', 0)}, "
+                f"sold_last_30d={p.get('last30dQty', 0)}, "
+                f"sold_last_7d={p.get('last7dQty', 0)}, "
+                f"avg_daily_90d={avg90}, "
+                f"avg_daily_30d={avg30}, "
+                f"trend={trend}, "
+                f"peak_day={peak_day}({peak_val}units/day_avg), "
+                f"data_source={data_src}"
+            )
+            lines.append(line)
+
+        prompt = (
+            "Recommend order quantities for each product below.\n"
+            "Rules:\n"
+            "- Base the quantity on the 30-day avg daily sales (more recent signal).\n"
+            "- Target cover: 60 days if trend=accelerating, 45 days if stable, 30 days if declining.\n"
+            "- Subtract current stock from the target cover amount.\n"
+            "- Never go below min stock.\n"
+            "- If no sales history (all zeros), use 2× min stock.\n"
+            "- Factor in peak day when the peak is significantly higher than the average.\n\n"
+            "Products:\n"
+            + "\n".join(lines)
+            + "\n\nRespond with ONLY the JSON array. No other text."
+        )
+
+        raw_response = await call_llm(api_key=api_key, system_message=system_message, prompt=prompt)
+
+        # Parse with multiple fallback strategies
+        suggestions = None
+        cleaned = raw_response.replace("```json", "").replace("```", "").strip()
+
+        for attempt in [
+            lambda s: json.loads(s),
+            lambda s: json.loads(s[s.index("["):s.rindex("]") + 1]),
+        ]:
+            if suggestions is not None:
+                break
+            try:
+                result = attempt(cleaned)
+                if isinstance(result, list):
+                    suggestions = result
+                elif isinstance(result, dict) and "suggestions" in result:
+                    suggestions = result["suggestions"]
+            except Exception:
+                pass
+
+        # If AI parse still fails, fall back to rule-based rather than erroring
+        if not isinstance(suggestions, list) or not suggestions:
+            logger.warning("po-suggest: could not parse LLM response, using rule-based fallback")
+            return {"suggestions": rule_based(products), "mode": "rule_based_fallback"}
+
+        # Validate and sanitise each item
+        valid_trends = {"accelerating", "stable", "declining"}
+        clean_suggestions = []
+        product_names = {p["name"].lower(): p for p in products}
+        for item in suggestions:
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("name", "")).strip()
+            qty = item.get("qty")
+            try:
+                qty = max(1, int(qty))
+            except (TypeError, ValueError):
+                matched = product_names.get(name.lower())
+                qty = rule_based([matched])[0]["qty"] if matched else 1
+            trend = str(item.get("trend", "stable")).strip().lower()
+            if trend not in valid_trends:
+                trend = "stable"
+            clean_suggestions.append({
+                "name": name,
+                "qty": qty,
+                "reason": str(item.get("reason", "AI recommendation")).strip(),
+                "trend": trend
+            })
+
+        return {"suggestions": clean_suggestions, "mode": "ai"}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"po-suggest error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"PO suggestion failed: {str(e)}")
+
+
 # ==================== REPORT ENDPOINTS ====================
 
 class ReportRequest(BaseModel):

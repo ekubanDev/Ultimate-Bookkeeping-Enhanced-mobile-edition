@@ -107,23 +107,20 @@ class AIChatService {
     }
 
     ensureLauncherButtons() {
-        const addIfMissing = (container, id, label, icon) => {
-            if (!container || document.getElementById(id)) return null;
-            const btn = document.createElement('button');
-            btn.id = id;
-            btn.type = 'button';
-            btn.className = 'ai-chat-launcher-btn';
-            btn.setAttribute('aria-label', 'Open AI assistant');
-            btn.innerHTML = `<i class="${icon}"></i> <span>${label}</span>`;
-            container.appendChild(btn);
-            return btn;
-        };
+        const root = document.getElementById('ai-chat-root');
 
-        // Header launcher (desktop/tablet and webview-safe)
-        const authControls = document.getElementById('auth-controls');
-        addIfMissing(authControls, 'ai-chat-launcher-header', 'AI Assistant', 'fas fa-robot');
+        // FAB — the single launcher for all screen sizes (desktop, tablet, mobile)
+        if (root && !document.getElementById('ai-chat-fab')) {
+            const fab = document.createElement('button');
+            fab.id = 'ai-chat-fab';
+            fab.type = 'button';
+            fab.className = 'ai-chat-fab';
+            fab.setAttribute('aria-label', 'Open AI assistant');
+            fab.innerHTML = `<div class="fab-pulse"></div><i class="fas fa-robot"></i>`;
+            root.appendChild(fab);
+        }
 
-        // Mobile bottom nav launcher
+        // Mobile bottom nav launcher (kept for quick-nav convenience on small screens)
         const bottomNav = document.getElementById('bottom-nav');
         if (bottomNav && !document.getElementById('ai-chat-launcher-bottom')) {
             const btn = document.createElement('button');
@@ -140,7 +137,7 @@ class AIChatService {
         this.launcherButtons.forEach((btn) => btn?.removeEventListener?.('click', this._launcherHandler));
         this._launcherHandler = () => this.toggle();
         this.launcherButtons = [
-            document.getElementById('ai-chat-launcher-header'),
+            document.getElementById('ai-chat-fab'),
             document.getElementById('ai-chat-launcher-bottom'),
         ].filter(Boolean);
         this.launcherButtons.forEach((btn) => btn.addEventListener('click', this._launcherHandler));

@@ -168,8 +168,10 @@ async function initializeApp() {
             heavyInitDone = true;
             window.enhancedDashboard = new EnhancedDashboard();
             console.log('✅ Enhanced Dashboard initialized');
-            // Auth often finishes before this runs on Safari; without a refresh we stay on legacy renderDashboard()
-            if (window.appController) {
+            // Only trigger a dashboard refresh if auth + data are already loaded.
+            // If auth hasn't completed yet, the auth observer will call showSection('dashboard')
+            // after loadAll() finishes — no need to pre-fire a refresh into empty state.
+            if (window.appController && state.authInitialized && state.currentUser) {
                 window.appController.markSectionDirty('dashboard');
                 window.appController._refreshCurrentSectionIfDirty();
             }

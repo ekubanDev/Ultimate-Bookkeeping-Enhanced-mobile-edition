@@ -11,6 +11,7 @@ export class AppState {
     constructor() {
         this.currentUser = null;
         this.authInitialized = false;
+        this.dataReady = false; // true once loadAll() has resolved for the current user
         this.currencySymbol = CONFIG.defaults.currencySymbol;
         this.allProducts = [];
         this.allSales = [];
@@ -71,6 +72,8 @@ export class AppState {
         this.allOutlets = []; 
         this.managedUsers = [];
         
+        this.dataReady = false;
+
         // Destroy all chart instances
         Object.values(this.charts).forEach(chart => chart?.destroy());
         this.charts = {};

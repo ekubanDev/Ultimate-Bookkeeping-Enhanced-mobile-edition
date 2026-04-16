@@ -182,6 +182,121 @@ class PDFExportService {
     }
 
     /**
+     * Product sale history: per-product totals, then all lines grouped by product (A–Z) and date.
+     */
+    async generateProductSaleHistoryPdf(dateRange = {}) {
+        try {
+            await this.loadJSPDF();
+            const { jsPDF } = window.jspdf;
+            const doc = new jsPDF();
+
+            let sales = [...(state.allSales || [])];
+            if (dateRange.start) {
+                sales = sales.filter((s) => (s.date || '') >= dateRange.start);
+            }
+            if (dateRange.end) {
+                sales = sales.filter((s) => (s.date || '') <= dateRange.end);
+            }
+
+            const productOf = (s) => {
+                const n = String(s.product || s.productName || '').trim();
+                return n || 'Unknown';
+            };
+
+            this.addHeader(doc, 'Product Sale History');
+            this.addDateRange(doc, dateRange);
+
+            if (sales.length === 0) {
+                doc.setFontSize(11);
+                doc.text('No sales records in this period.', 14, 52);
+                this.addFooter(doc);
+                await this.savePdfOutput(
+                    doc,
+                    `product-sale-history-${new Date().toISOString().split('T')[0]}.pdf`,
+                    'Product Sale History',
+                    'Product sale history downloaded'
+                );
+                return;
+            }
+
+            const summaryMap = new Map();
+            for (const s of sales) {
+                const p = productOf(s);
+                const line = this.getSaleTotal(s);
+                const qty = parseInt(s.quantity, 10) || 0;
+                if (!summaryMap.has(p)) {
+                    summaryMap.set(p, { qty: 0, revenue: 0, lines: 0 });
+                }
+                const agg = summaryMap.get(p);
+                agg.qty += qty;
+                agg.revenue += line;
+                agg.lines += 1;
+            }
+
+            const totalRevenue = sales.reduce((sum, s) => sum + this.getSaleTotal(s), 0);
+            const uniqueProducts = summaryMap.size;
+
+            doc.setFontSize(11);
+            doc.setFont(undefined, 'normal');
+            const statsY = dateRange.start || dateRange.end ? 52 : 48;
+            doc.text(
+                `Products with sales: ${uniqueProducts}  |  Line items: ${sales.length}  |  Total revenue: ${this.formatGHS(totalRevenue)}`,
+                14,
+                statsY
+            );
+
+            const summaryBody = [...summaryMap.entries()]
+                .sort((a, b) => a[0].localeCompare(b[0]))
+                .map(([name, agg]) => [name, String(agg.lines), String(agg.qty), this.formatGHS(agg.revenue)]);
+
+            doc.autoTable({
+                startY: statsY + 10,
+                head: [['Product', 'Sale lines', 'Qty sold', 'Revenue (GHS)']],
+                body: summaryBody,
+                styles: { fontSize: 8 },
+                headStyles: { fillColor: [0, 123, 255] },
+            });
+
+            const sortedDetail = [...sales].sort((a, b) => {
+                const cmp = productOf(a).localeCompare(productOf(b));
+                if (cmp !== 0) return cmp;
+                return String(a.date || '').localeCompare(String(b.date || ''));
+            });
+
+            const detailBody = sortedDetail.map((s) => [
+                String(s.date || '').slice(0, 10),
+                productOf(s),
+                s.customer || s.customerName || 'Walk-in',
+                String(parseInt(s.quantity, 10) || 0),
+                this.formatGHS(s.price),
+                this.formatGHS(this.getSaleTotal(s)),
+            ]);
+
+            const nextY = doc.lastAutoTable.finalY + 12;
+            doc.setFontSize(10);
+            doc.text('Detail (by product, then date)', 14, nextY);
+            doc.autoTable({
+                startY: nextY + 4,
+                head: [['Date', 'Product', 'Customer', 'Qty', 'Unit price (GHS)', 'Line total (GHS)']],
+                body: detailBody,
+                styles: { fontSize: 7 },
+                headStyles: { fillColor: [40, 167, 69] },
+            });
+
+            this.addFooter(doc);
+            await this.savePdfOutput(
+                doc,
+                `product-sale-history-${new Date().toISOString().split('T')[0]}.pdf`,
+                'Product Sale History',
+                'Product sale history downloaded'
+            );
+        } catch (error) {
+            console.error('Error generating product sale history PDF:', error);
+            Utils.showToast('Failed to generate PDF: ' + error.message, 'error');
+        }
+    }
+
+    /**
      * Generate Inventory Report PDF
      */
     async generateInventoryReport(dateRange = {}) {
@@ -1475,6 +1590,9 @@ class PDFExportService {
                     <button onclick="pdfExport.handleExport('stock-valuation')" class="export-btn">
                         <i class="fas fa-warehouse"></i> Stock Valuation
                     </button>
+                    <button onclick="pdfExport.handleExport('product-sale-history')" class="export-btn">
+                        <i class="fas fa-history"></i> Product sale history
+                    </button>
                 </div>
             </div>
         `;
@@ -1502,6 +1620,7 @@ class PDFExportService {
             case 'tax': this.generateTaxReport(dateRange); break;
             case 'ar-aging': this.generateARAgingReport(); break;
             case 'stock-valuation': this.generateStockValuationReport(); break;
+            case 'product-sale-history': this.generateProductSaleHistoryPdf(dateRange); break;
         }
 
         document.getElementById('pdf-export-modal')?.remove();

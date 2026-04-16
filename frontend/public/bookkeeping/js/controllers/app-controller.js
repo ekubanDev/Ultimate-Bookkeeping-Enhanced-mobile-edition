@@ -26,6 +26,7 @@ import {
 import { state } from '../utils/state.js';
 import { Utils } from '../utils/utils.js';
 import { isDebtPayment, getSaleTotal, validateProductWrite, validateExpenseWrite, validateLiabilityWrite } from '../utils/accounting.js';
+import { UX } from '../utils/ux.js';
 import { firebaseService } from '../services/firebase-service.js';
 import { dataLoader } from '../services/data-loader.js';
 import ActivityLogger from '../services/activity-logger.js';
@@ -174,7 +175,7 @@ class AppController {
                         }
                     });
                 }
-                document.getElementById('show-register').addEventListener('click', (e) => {
+                document.getElementById('show-register')?.addEventListener('click', (e) => {
                     e.preventDefault();
                     document.getElementById('login-modal').style.display = 'none';
                     document.getElementById('register-modal').style.display = 'block';
@@ -473,10 +474,10 @@ class AppController {
                     if (supplierStatusFilter) supplierStatusFilter.addEventListener('change', debouncedFilter);
                 }
 
-                // Purchase Orders button
+                // Purchase Orders button — offer auto-fill from low/out-of-stock before opening
                 const addPOBtn = document.getElementById('add-po-btn');
                 if (addPOBtn) {
-                    addPOBtn.addEventListener('click', () => this.setupCreatePOModal());
+                    addPOBtn.addEventListener('click', () => this.promptCreatePOWithStockSuggestion());
                 }
 
                 // Purchase Order form submit
@@ -516,21 +517,43 @@ class AppController {
                                 const qty = parseFloat(document.getElementById(`po-quantity-${index}`)?.value) || 0;
                                 const cost = parseFloat(document.getElementById(`po-cost-${index}`)?.value) || 0;
                                 
+                                const focusField = (fieldEl, message) => {
+                                    if (fieldEl) {
+                                        fieldEl.style.borderColor = '#dc3545';
+                                        fieldEl.style.boxShadow = '0 0 0 3px rgba(220,53,69,0.2)';
+                                        fieldEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                                        fieldEl.focus();
+                                        // Clear the error highlight when user starts correcting
+                                        fieldEl.addEventListener('input', () => {
+                                            fieldEl.style.borderColor = '';
+                                            fieldEl.style.boxShadow = '';
+                                        }, { once: true });
+                                    }
+                                    Utils.showToast(message, 'error');
+                                    Utils.hideSpinner();
+                                };
+
                                 if (!productName) {
-                                    Utils.showToast(`Please select or enter a product for Item ${parseInt(index) + 1}`, 'error');
-                                    Utils.hideSpinner();
+                                    focusField(
+                                        document.getElementById(`po-product-search-${index}`),
+                                        `Item ${parseInt(index) + 1}: Please select or enter a product`
+                                    );
                                     return;
                                 }
-                                
+
                                 if (qty <= 0) {
-                                    Utils.showToast(`Please enter quantity for ${productName}`, 'error');
-                                    Utils.hideSpinner();
+                                    focusField(
+                                        document.getElementById(`po-quantity-${index}`),
+                                        `${productName}: Please enter a quantity`
+                                    );
                                     return;
                                 }
-                                
+
                                 if (cost <= 0) {
-                                    Utils.showToast(`Please enter unit cost for ${productName}`, 'error');
-                                    Utils.hideSpinner();
+                                    focusField(
+                                        document.getElementById(`po-cost-${index}`),
+                                        `${productName}: Please enter a unit cost`
+                                    );
                                     return;
                                 }
                                 
@@ -603,7 +626,8 @@ class AppController {
                             // Reload purchase orders
                             await dataLoader.loadPurchaseOrders();
                             this.renderPurchaseOrders();
-                            
+                            window.stockAlerts?.refreshAlertWidget?.();
+
                         } catch (error) {
                             console.error('❌ Error creating PO:', error);
                             Utils.showToast('Error: ' + error.message, 'error');
@@ -631,7 +655,7 @@ class AppController {
                         
                         console.log('=== RECEIVING PURCHASE ORDER ===');
                         
-                        if (!confirm('Are you sure you want to receive this purchase order? This will update inventory and create accounting entries.')) {
+                        if (!await UX.confirm({ title: 'Receive Purchase Order', body: 'This will update inventory quantities and create accounting entries.', confirmLabel: 'Receive PO', variant: 'warning' })) {
                             return;
                         }
                         
@@ -860,7 +884,8 @@ class AppController {
                             ]);
                             
                             this.renderPurchaseOrders();
-                            
+                            window.stockAlerts?.refreshAlertWidget?.();
+
                         } catch (error) {
                             console.error('❌ Error receiving PO:', error);
                             Utils.showToast('Error: ' + error.message, 'error');
@@ -1205,22 +1230,39 @@ class AppController {
 
                 // Global search
                 const globalSearch = document.getElementById('global-search');
-                const globalSearchResults = document.getElementById('global-search-results');
+                let globalSearchResults = document.getElementById('global-search-results');
 
                 if (globalSearch && globalSearchResults) {
+                    // Move dropdown to <body> so it sits in the root stacking context,
+                    // completely outside the header's stacking context (z-index: 1500).
+                    document.body.appendChild(globalSearchResults);
+
+                    const positionDropdown = () => {
+                        const rect = globalSearch.getBoundingClientRect();
+                        globalSearchResults.style.top   = `${rect.bottom + 6}px`;
+                        globalSearchResults.style.left  = `${rect.left}px`;
+                        globalSearchResults.style.width = `${rect.width}px`;
+                    };
+
                     const debouncedSearch = Utils.debounce((query) => {
                         this.performGlobalSearch(query);
                     }, 300);
-                    
+
                     globalSearch.addEventListener('input', (e) => {
                         const query = e.target.value.trim().toLowerCase();
                         if (query.length >= 2) {
+                            positionDropdown();
                             debouncedSearch(query);
                         } else {
                             globalSearchResults.style.display = 'none';
                         }
                     });
-                    
+
+                    // Re-position on scroll/resize
+                    window.addEventListener('resize', () => {
+                        if (globalSearchResults.style.display !== 'none') positionDropdown();
+                    });
+
                     // Close search results when clicking outside
                     document.addEventListener('click', (e) => {
                         if (!globalSearch.contains(e.target) && !globalSearchResults.contains(e.target)) {
@@ -1257,29 +1299,31 @@ class AppController {
                         document.getElementById('connection-status').textContent = 'Connected';
                         
                         await firebaseService.ensureUserData();
-                        
-                        
-                        //this.renderDashboard();
-                        this.setupRealtimeListeners();
 
                         // Load user role
                         const roleData = await firebaseService.getUserRole();
                         state.userRole = roleData.role;
                         state.assignedOutlet = roleData.assignedOutlet;
 
-                       
-
                         if (state.userRole === 'admin') {
                             await this.loadManagedUsers();
                         }
 
                         console.log('Role:', state.userRole);
-                        
+
                         // Show appropriate UI based on role
                         this.showAppUI();
                         if (window.enhancedDashboard) window.enhancedDashboard.state = state;
-                        await dataLoader.loadAll();
-                        await this.loadSettings();
+
+                        // Load all data + settings in parallel, then wire up realtime listeners
+                        // Listeners fire AFTER initial data is in state — prevents premature snapshots into empty state
+                        await Promise.all([
+                            dataLoader.loadAll(),
+                            this.loadSettings()
+                        ]);
+                        state.dataReady = true;
+                        window.stockAlerts?.enableStartupPOButton?.();
+                        this.setupRealtimeListeners();
                         // Apply role-based restrictions
                         this.applyRoleBasedUI();
                         
@@ -1432,7 +1476,18 @@ class AppController {
                 
                 if (section) section.style.display = 'block';
                 if (navItem) navItem.classList.add('active');
-                
+
+                // Update topbar page title
+                const titleEl = document.getElementById('topbar-page-title');
+                if (titleEl && navItem) {
+                    titleEl.textContent = navItem.querySelector('span')?.textContent?.trim() || sectionName;
+                }
+
+                // Sync bottom nav active state
+                document.querySelectorAll('.bottom-nav-item[data-section]').forEach(btn => {
+                    btn.classList.toggle('active', btn.dataset.section === sectionName);
+                });
+
                 // Scroll main content to top for better UX
                 const container = document.getElementById('sections-container');
                 if (container) container.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -1508,7 +1563,7 @@ class AppController {
                         if (shouldRender) { this.loadManagedUsers(); this._markRendered(sectionName); }
                         break;
                     case 'settings':
-                        if (shouldRender) { this.loadSettings(); this._markRendered(sectionName); }
+                        if (shouldRender) { this.loadSettings(); this._initThemePicker(); this._markRendered(sectionName); }
                         break;
                     case 'profit-analysis':
                         this.showProfitAnalysis();
@@ -1979,7 +2034,7 @@ class AppController {
                 const user = state.managedUsers.find(u => u.id === userId);
                 if (!user) return;
                 
-                if (!confirm(`Delete user account for ${user.email}? This action cannot be undone.`)) {
+                if (!await UX.confirm({ title: 'Delete User Account', body: `Remove account for ${user.email}? This action cannot be undone.`, confirmLabel: 'Delete', variant: 'danger' })) {
                     return;
                 }
                 
@@ -2154,8 +2209,10 @@ class AppController {
             }
             async handleAddProduct(e) {
                 e.preventDefault();
+                const submitBtn = e.target.querySelector('[type="submit"]');
+                UX.setLoading(submitBtn, true);
                 Utils.showSpinner();
-                
+
                 try {
                     if (window.formValidator) {
                         const validation = window.formValidator.validateProduct({
@@ -2197,6 +2254,7 @@ class AppController {
                 } catch (error) {
                     Utils.showToast('Failed to add product: ' + error.message, 'error');
                 } finally {
+                    UX.setLoading(submitBtn, false);
                     Utils.hideSpinner();
                 }
             }
@@ -2238,7 +2296,7 @@ class AppController {
                     Utils.showToast('Access restricted to administrators', 'warning');
                     return;
                 }
-                if (!confirm('Are you sure you want to delete this product?')) return;
+                if (!await UX.confirm({ title: 'Delete Product', body: 'This will permanently remove the product from your inventory.', confirmLabel: 'Delete', variant: 'danger' })) return;
 
                 Utils.showSpinner();
                 try {
@@ -2420,7 +2478,10 @@ class AppController {
             renderInventoryTable() {
                 const tbody = document.querySelector('#inventory-table tbody');
                 if (!tbody) return;
-                
+
+                // Show skeleton while filtering (feels instant vs blank flash)
+                UX.skeleton(tbody, 7, 4);
+
                 tbody.innerHTML = '';
                 
                 const search = document.getElementById('inventory-search')?.value.toLowerCase() || '';
@@ -2460,17 +2521,33 @@ class AppController {
                 const paginatedProducts = filtered.slice(startIndex, endIndex);
                 
                 if (paginatedProducts.length === 0) {
-                    tbody.innerHTML = '<tr><td colspan="6" class="no-data">No products found</td></tr>';
+                    const emptyCell = document.createElement('td');
+                    emptyCell.colSpan = 6;
+                    const emptyRow = document.createElement('tr');
+                    emptyRow.appendChild(emptyCell);
+                    tbody.innerHTML = '';
+                    tbody.appendChild(emptyRow);
+                    if (search || category || stockFilter) {
+                        UX.noResults(emptyCell, search || category || stockFilter);
+                    } else {
+                        UX.emptyState(emptyCell, {
+                            icon: 'fa-boxes',
+                            title: 'No products yet',
+                            desc: 'Add your first product to start tracking inventory.',
+                            actionLabel: 'Add Product',
+                            onAction: () => document.getElementById('add-product-btn')?.click()
+                        });
+                    }
                 } else {
                     const isAdmin = state.userRole === 'admin';
                     paginatedProducts.forEach(product => {
                         const row = document.createElement('tr');
                         row.innerHTML = `
-                            <td>${product.name}</td>
-                            <td>${product.category}</td>
-                            <td>${Utils.formatCurrency(product.cost)}</td>
-                            <td>${Utils.formatCurrency(product.price)}</td>
-                            <td>${product.quantity}</td>
+                            <td data-label="Product">${product.name}</td>
+                            <td data-label="Category">${product.category}</td>
+                            <td data-label="Cost">${Utils.formatCurrency(product.cost)}</td>
+                            <td data-label="Price">${Utils.formatCurrency(product.price)}</td>
+                            <td data-label="Stock">${product.quantity}</td>
                             <td class="actions">
                                 <button onclick="appController.viewProduct('${product.id}')" title="View"><i class="fas fa-eye"></i></button>
                                 ${isAdmin ? `
@@ -3083,8 +3160,10 @@ class AppController {
 
             async handleAddSale(e) {
                 e.preventDefault();
+                const submitBtn = e.target.querySelector('[type="submit"]');
+                UX.setLoading(submitBtn, true);
                 Utils.showSpinner();
-                
+
                 try {
                     const productName = document.getElementById('sale-product').value;
                     const quantity = parseInt(document.getElementById('sale-quantity').value);
@@ -3200,6 +3279,8 @@ class AppController {
                     
                     await ActivityLogger.log('Sale Recorded', `Sale: ${quantity} x ${productName} to ${customer} at ${saleData.locationName}`);
                     
+                    UX.haptic([10, 30, 10]);
+                    UX.announce('Sale recorded successfully');
                     Utils.showToast('Sale recorded successfully', 'success');
                     document.getElementById('add-sale-modal').style.display = 'none';
                     document.getElementById('add-sale-form').reset();
@@ -3214,6 +3295,7 @@ class AppController {
                     console.error('Error recording sale:', error);
                     Utils.showToast('Failed to record sale: ' + error.message, 'error');
                 } finally {
+                    UX.setLoading(submitBtn, false);
                     Utils.hideSpinner();
                 }
             }
@@ -3330,7 +3412,7 @@ class AppController {
                     Utils.showToast('Access restricted to administrators', 'warning');
                     return;
                 }
-                if (!confirm('Delete this sale? This will restore the product quantity.')) return;
+                if (!await UX.confirm({ title: 'Delete Sale', body: 'This will restore the product quantity to inventory.', confirmLabel: 'Delete', variant: 'danger' })) return;
 
                 Utils.showSpinner();
                 
@@ -3477,7 +3559,18 @@ class AppController {
                 const totalGroups = sortedDates.length;
                 
                 if (totalGroups === 0) {
-                    container.innerHTML = '<div class="no-data">No sales found</div>';
+                    const hasFilters = customerSearch || productSearch || dateFilter !== 'all';
+                    if (hasFilters) {
+                        UX.noResults(container, customerSearch || productSearch || dateFilter);
+                    } else {
+                        UX.emptyState(container, {
+                            icon: 'fa-shopping-bag',
+                            title: 'No sales yet',
+                            desc: 'Record your first sale to see it here.',
+                            actionLabel: 'Record Sale',
+                            onAction: () => document.getElementById('add-sale-btn')?.click()
+                        });
+                    }
                     return;
                 }
                 
@@ -3602,8 +3695,10 @@ class AppController {
             }
             async handleAddExpense(e) {
                 e.preventDefault();
+                const submitBtn = e.target.querySelector('[type="submit"]');
+                UX.setLoading(submitBtn, true);
                 Utils.showSpinner();
-                
+
                 try {
                     if (window.formValidator) {
                         const validation = window.formValidator.validateExpenseForm({
@@ -3673,12 +3768,13 @@ class AppController {
                     console.error('Error adding expense:', error);
                     Utils.showToast('Failed to add expense: ' + error.message, 'error');
                 } finally {
+                    UX.setLoading(submitBtn, false);
                     Utils.hideSpinner();
                 }
             }
 
             async deleteExpense(expenseId) {
-                if (!confirm('Are you sure you want to delete this expense?')) return;
+                if (!await UX.confirm({ title: 'Delete Expense', body: 'This expense record will be permanently removed.', confirmLabel: 'Delete', variant: 'danger' })) return;
                 
                 Utils.showSpinner();
                 try {
@@ -3737,7 +3833,23 @@ class AppController {
                 }
                 
                 if (filtered.length === 0) {
-                    tbody.innerHTML = '<tr><td colspan="5" class="no-data">No expenses found</td></tr>';
+                    const emptyCell = document.createElement('td');
+                    emptyCell.colSpan = 5;
+                    const emptyRow = document.createElement('tr');
+                    emptyRow.appendChild(emptyCell);
+                    tbody.innerHTML = '';
+                    tbody.appendChild(emptyRow);
+                    if (search || dateFilter !== 'all') {
+                        UX.noResults(emptyCell, search || dateFilter);
+                    } else {
+                        UX.emptyState(emptyCell, {
+                            icon: 'fa-receipt',
+                            title: 'No expenses yet',
+                            desc: 'Record your business expenses to track spending.',
+                            actionLabel: 'Add Expense',
+                            onAction: () => document.getElementById('add-expense-btn')?.click()
+                        });
+                    }
                     table.dataset.expensesPage = '0';
                     return;
                 }
@@ -3757,10 +3869,10 @@ class AppController {
                         `<span style="font-size: 0.85em; color: #6c757d;">(Main Office)</span>` : '';
                     
                     row.innerHTML = `
-                        <td>${expense.date}</td>
-                        <td>${expense.description} ${location}</td>
-                        <td>${expense.category}</td>
-                        <td>${Utils.formatCurrency(expense.amount)}</td>
+                        <td data-label="Date">${expense.date}</td>
+                        <td data-label="Description">${expense.description} ${location}</td>
+                        <td data-label="Category">${expense.category}</td>
+                        <td data-label="Amount">${Utils.formatCurrency(expense.amount)}</td>
                         <td class="actions">
                             <button class="danger" onclick="appController.deleteExpense('${expense.id}')" title="Delete"><i class="fas fa-trash"></i></button>
                         </td>
@@ -3934,6 +4046,8 @@ class AppController {
 
             async handleRecordLiabilityPayment(e) {
                 e.preventDefault();
+                const submitBtn = e.target.querySelector('[type="submit"]');
+                UX.setLoading(submitBtn, true);
                 Utils.showSpinner();
                 const flowStartedAt = Date.now();
                 const flowCorrelationId = (typeof crypto !== 'undefined' && crypto.randomUUID)
@@ -4028,6 +4142,8 @@ class AppController {
                         result: 'success'
                     }, { correlationId: flowCorrelationId });
 
+                    UX.haptic([10, 30, 10]);
+                    UX.announce(`Payment of ${Utils.formatCurrency(paymentAmount)} recorded`);
                     Utils.showToast(`Payment of ${Utils.formatCurrency(paymentAmount)} recorded successfully`, 'success');
                     document.getElementById('record-liability-payment-modal').style.display = 'none';
                     document.getElementById('record-liability-payment-form').reset();
@@ -4059,6 +4175,7 @@ class AppController {
                     }, { correlationId: flowCorrelationId });
                     Utils.showToast('Failed to record payment: ' + error.message, 'error');
                 } finally {
+                    UX.setLoading(submitBtn, false);
                     Utils.hideSpinner();
                 }
             }
@@ -4172,7 +4289,7 @@ class AppController {
             }
 
             async deleteLiability(liabilityId) {
-                if (!confirm('Are you sure you want to delete this liability?')) return;
+                if (!await UX.confirm({ title: 'Delete Liability', body: 'This liability record will be permanently removed.', confirmLabel: 'Delete', variant: 'danger' })) return;
                 
                 Utils.showSpinner();
                 try {
@@ -4221,7 +4338,23 @@ class AppController {
                 this.updateLiabilitiesSummary(filtered);
                 
                 if (filtered.length === 0) {
-                    tbody.innerHTML = '<tr><td colspan="7" class="no-data">No liabilities found</td></tr>';
+                    const emptyCell = document.createElement('td');
+                    emptyCell.colSpan = 7;
+                    const emptyRow = document.createElement('tr');
+                    emptyRow.appendChild(emptyCell);
+                    tbody.innerHTML = '';
+                    tbody.appendChild(emptyRow);
+                    if (search || typeFilter || statusFilter) {
+                        UX.noResults(emptyCell, search || typeFilter || statusFilter);
+                    } else {
+                        UX.emptyState(emptyCell, {
+                            icon: 'fa-file-invoice-dollar',
+                            title: 'No liabilities yet',
+                            desc: 'Track loans and payables to stay on top of what you owe.',
+                            actionLabel: 'Add Liability',
+                            onAction: () => document.getElementById('add-liability-btn')?.click()
+                        });
+                    }
                     return;
                 }
                 
@@ -4252,12 +4385,12 @@ class AppController {
                     const creditorDisplay = liability.creditor || liability.supplierName || 'Unknown Creditor';
                     
                     row.innerHTML = `
-                        <td>${creditorDisplay}</td>
-                        <td>${typeDisplay}</td>
-                        <td>${liability.description}</td>
-                        <td>${Utils.formatCurrency(liability.balance)}</td>
-                        <td>${liability.dueDate}</td>
-                        <td class="${statusClass}">${statusDisplay}</td>
+                        <td data-label="Creditor">${creditorDisplay}</td>
+                        <td data-label="Type">${typeDisplay}</td>
+                        <td data-label="Description">${liability.description}</td>
+                        <td data-label="Balance">${Utils.formatCurrency(liability.balance)}</td>
+                        <td data-label="Due Date">${liability.dueDate}</td>
+                        <td data-label="Status" class="${statusClass}">${statusDisplay}</td>
                         <td class="actions">
                             ${liability.balance > 0 ? `
                                 <button onclick="appController.openRecordLiabilityPaymentModal('${liability.id}')" title="Record Payment">
@@ -4304,6 +4437,98 @@ class AppController {
 
             // ==================== PURCHASE ORDER ITEM MANAGEMENT ====================
 
+            /**
+             * Called when user clicks "Add Purchase Order".
+             * If there are low-stock or out-of-stock products, offer to auto-generate from them.
+             * Otherwise open the blank modal immediately.
+             */
+            async promptCreatePOWithStockSuggestion() {
+                const lowStock = (window.stockAlerts?.getLowStockProducts?.() || []);
+                const outOfStock = (window.stockAlerts?.getOutOfStockProducts?.() || []);
+                const problemProducts = [...outOfStock, ...lowStock.filter(p => !outOfStock.find(o => o.id === p.id))];
+
+                if (problemProducts.length === 0) {
+                    // No stock issues — open blank PO straight away
+                    this.setupCreatePOModal();
+                    return;
+                }
+
+                // Build inline suggestion prompt inside a small modal
+                const totalNeeded = problemProducts.reduce((sum, p) => {
+                    const min = parseFloat(p.minStock) || 10;
+                    const qty = parseFloat(p.quantity) || 0;
+                    return sum + Math.max(0, min - qty);
+                }, 0);
+
+                const promptId = 'po-stock-suggestion-modal';
+                let prompt = document.getElementById(promptId);
+                if (prompt) prompt.remove();
+
+                prompt = document.createElement('div');
+                prompt.id = promptId;
+                prompt.className = 'modal';
+                prompt.style.display = 'block';
+
+                const outCount  = outOfStock.length;
+                const lowCount  = lowStock.length;
+                const itemsList = problemProducts.slice(0, 5).map(p => {
+                    const qty = parseFloat(p.quantity) || 0;
+                    const min = parseFloat(p.minStock) || 10;
+                    const badge = qty <= 0
+                        ? `<span style="background:#dc3545;color:#fff;padding:1px 7px;border-radius:10px;font-size:0.72rem;">Out</span>`
+                        : `<span style="background:#fd7e14;color:#fff;padding:1px 7px;border-radius:10px;font-size:0.72rem;">Low</span>`;
+                    return `<li style="padding:0.3rem 0;display:flex;align-items:center;gap:0.5rem;">${badge} <strong>${p.name}</strong> <span style="color:#666;font-size:0.85rem;">(${qty} / min ${min})</span></li>`;
+                }).join('');
+                const moreNote = problemProducts.length > 5
+                    ? `<li style="color:#666;font-size:0.85rem;">…and ${problemProducts.length - 5} more</li>` : '';
+
+                prompt.innerHTML = `
+                    <div class="modal-content" style="max-width:480px;">
+                        <h3 style="margin-bottom:0.25rem;"><i class="fas fa-file-invoice" style="color:#1E3A8A;"></i> New Purchase Order</h3>
+                        <p style="color:#475569;font-size:0.9rem;margin-bottom:1rem;">
+                            ${outCount > 0 ? `<strong style="color:#dc3545;">${outCount} out of stock</strong>` : ''}
+                            ${outCount > 0 && lowCount > 0 ? ' · ' : ''}
+                            ${lowCount > 0 ? `<strong style="color:#fd7e14;">${lowCount} low stock</strong>` : ''}
+                            &nbsp;detected.
+                        </p>
+                        <div style="background:#F8FAFC;border:1px solid #E2E8F0;border-radius:10px;padding:0.85rem 1rem;margin-bottom:1.25rem;">
+                            <p style="font-weight:600;color:#0F172A;margin:0 0 0.5rem;">Would you like to auto-fill this order from these products?</p>
+                            <ul style="list-style:none;padding:0;margin:0;">
+                                ${itemsList}${moreNote}
+                            </ul>
+                            <p style="margin:0.6rem 0 0;font-size:0.82rem;color:#64748B;">
+                                ${Math.ceil(totalNeeded)} units across ${problemProducts.length} product${problemProducts.length !== 1 ? 's' : ''} — quantities pre-set to restock to minimum levels.
+                            </p>
+                        </div>
+                        <div style="display:flex;gap:0.75rem;flex-wrap:wrap;">
+                            <button type="button" id="po-suggest-yes"
+                                style="flex:1;background:#1E3A8A;color:#fff;border:none;border-radius:8px;padding:0.6rem 1rem;font-weight:600;cursor:pointer;font-size:0.9rem;">
+                                <i class="fas fa-magic"></i> Auto-fill from stock alerts
+                            </button>
+                            <button type="button" id="po-suggest-no"
+                                style="flex:1;background:#F1F5F9;color:#1e293b;border:1px solid #E2E8F0;border-radius:8px;padding:0.6rem 1rem;font-weight:600;cursor:pointer;font-size:0.9rem;">
+                                <i class="fas fa-plus"></i> Start blank
+                            </button>
+                        </div>
+                    </div>
+                `;
+
+                document.body.appendChild(prompt);
+
+                const ids = problemProducts.map(p => p.id);
+                document.getElementById('po-suggest-yes').onclick = () => {
+                    prompt.remove();
+                    this.setupCreatePOModal(ids);
+                };
+                document.getElementById('po-suggest-no').onclick = () => {
+                    prompt.remove();
+                    this.setupCreatePOModal();
+                };
+                prompt.addEventListener('click', (e) => {
+                    if (e.target === prompt) prompt.remove();
+                });
+            }
+
             /** Setup and show Create PO modal. Pass product IDs to pre-fill with out-of-stock products. */
             setupCreatePOModal(prefillProductIds = []) {
                 document.getElementById('add-po-form').reset();
@@ -4341,9 +4566,17 @@ class AppController {
                         const product = state.allProducts.find(p => p.id === id);
                         if (product) this.addPOItemRow(product);
                     });
+                    // Fire Firestore sales history queries immediately in the background
+                    // so data is ready by the time the user clicks the AI button.
+                    this._poSalesDataPromise = this._fetchProductSalesHistory(prefillProductIds);
+                    // Show AI optimize button when pre-filled from stock alerts
+                    this._injectAIOptimizeButton(prefillProductIds);
                 } else {
+                    this._poSalesDataPromise = null;
                     this.addPOItemRow();
                 }
+                // Set initial disable state on remove buttons
+                this.renumberPOItems();
                 
                 const addItemBtn = document.getElementById('add-po-item-btn');
                 if (addItemBtn) {
@@ -4364,12 +4597,340 @@ class AppController {
                 document.getElementById('add-po-modal').style.display = 'block';
             }
 
+            /**
+             * Fetch complete sales history for a set of products directly from Firestore.
+             * Runs in parallel across main sales + all outlet subcollections.
+             * Called immediately when the PO modal opens so data is ready before the
+             * user clicks the AI button.
+             *
+             * @param {string[]} productIds
+             * @returns {Promise<Map<string, Array>>} productId → array of sale records
+             */
+            async _fetchProductSalesHistory(productIds) {
+                const uid = state.currentUser?.uid;
+                if (!uid || !productIds.length) return new Map();
+
+                const now = new Date();
+                const cutoff90 = new Date(now); cutoff90.setDate(now.getDate() - 90);
+                const cutoffStr = cutoff90.toISOString().slice(0, 10);
+
+                // Helper: fetch sales for one product from one collection ref
+                const fetchOne = async (collRef, productId, productName) => {
+                    try {
+                        // Try productId first (reliable), then name (legacy records)
+                        const byId = await getDocs(query(
+                            collRef,
+                            where('productId', '==', productId),
+                            where('date', '>=', cutoffStr),
+                            orderBy('date', 'asc')
+                        )).catch(() => null);
+
+                        const byName = await getDocs(query(
+                            collRef,
+                            where('product', '==', productName),
+                            where('date', '>=', cutoffStr),
+                            orderBy('date', 'asc')
+                        )).catch(() => null);
+
+                        const rows = [];
+                        const seenIds = new Set();
+                        for (const snap of [byId, byName]) {
+                            if (!snap) continue;
+                            snap.forEach(d => {
+                                if (!seenIds.has(d.id)) {
+                                    seenIds.add(d.id);
+                                    rows.push({ id: d.id, ...d.data() });
+                                }
+                            });
+                        }
+                        return rows;
+                    } catch (_) {
+                        return [];
+                    }
+                };
+
+                // Build fetch jobs: main collection + every outlet subcollection
+                const mainRef = collection(db, 'users', uid, 'sales');
+                const outletIds = (state.allOutlets || []).map(o => o.id).filter(Boolean);
+
+                const allRows = new Map(); // productId → []
+                productIds.forEach(id => allRows.set(id, []));
+
+                const jobs = [];
+                for (const productId of productIds) {
+                    const product = state.allProducts.find(p => p.id === productId);
+                    const productName = product?.name || '';
+
+                    jobs.push(
+                        fetchOne(mainRef, productId, productName).then(rows => ({ productId, rows }))
+                    );
+                    for (const outletId of outletIds) {
+                        const outletRef = collection(db, 'users', uid, 'outlets', outletId, 'outlet_sales');
+                        jobs.push(
+                            fetchOne(outletRef, productId, productName).then(rows => ({ productId, rows }))
+                        );
+                    }
+                }
+
+                const results = await Promise.allSettled(jobs);
+                results.forEach(r => {
+                    if (r.status !== 'fulfilled') return;
+                    const { productId, rows } = r.value;
+                    const existing = allRows.get(productId) || [];
+                    // Deduplicate across collections by doc id
+                    const seenIds = new Set(existing.map(s => s.id));
+                    rows.forEach(s => { if (!seenIds.has(s.id)) { seenIds.add(s.id); existing.push(s); } });
+                    allRows.set(productId, existing);
+                });
+
+                return allRows;
+            }
+
+            /**
+             * Build a rich sales velocity summary for one product from its fetched sale rows.
+             * @param {Object} product
+             * @param {Array} rows  — sale records for this product (last 90 days)
+             * @returns {Object}
+             */
+            _buildProductVelocity(product, rows) {
+                const now = new Date();
+
+                const cutoff30 = new Date(now); cutoff30.setDate(now.getDate() - 30);
+                const cutoff7  = new Date(now); cutoff7.setDate(now.getDate() - 7);
+                const cutoffStr30 = cutoff30.toISOString().slice(0, 10);
+                const cutoffStr7  = cutoff7.toISOString().slice(0, 10);
+
+                let total90 = 0, total30 = 0, total7 = 0;
+                // weeklyPattern[0] = Sunday … [6] = Saturday
+                const weeklyBuckets = [0, 0, 0, 0, 0, 0, 0];
+                const weeklyCount   = [0, 0, 0, 0, 0, 0, 0];
+
+                rows.forEach(s => {
+                    const qty = parseFloat(s.quantity) || 0;
+                    const dateStr = s.date || '';
+                    total90 += qty;
+                    if (dateStr >= cutoffStr30) total30 += qty;
+                    if (dateStr >= cutoffStr7)  total7  += qty;
+
+                    // Day-of-week pattern
+                    if (dateStr) {
+                        try {
+                            const dow = new Date(dateStr + 'T00:00:00').getDay(); // 0=Sun
+                            weeklyBuckets[dow] += qty;
+                            weeklyCount[dow]++;
+                        } catch (_) {}
+                    }
+                });
+
+                const avgDailyQty = weeklyCount.reduce((a, b) => a + b, 0);
+                const weeklyPattern = weeklyBuckets.map((total, i) =>
+                    weeklyCount[i] > 0 ? Math.round((total / weeklyCount[i]) * 10) / 10 : 0
+                );
+
+                // Trend: compare last-30d daily rate vs prior 30d (days 31-60)
+                const daily90 = total90 / 90;
+                const daily30 = total30 / 30;
+                let trend = 'stable';
+                if (daily30 > daily90 * 1.2) trend = 'accelerating';
+                else if (daily30 < daily90 * 0.8) trend = 'declining';
+
+                // Day-of-week labels for the pattern array
+                const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+                return {
+                    name: product.name,
+                    id: product.id,
+                    currentStock: parseFloat(product.quantity) || 0,
+                    minStock: parseFloat(product.minStock) || 10,
+                    last90dQty: Math.round(total90),
+                    last30dQty: Math.round(total30),
+                    last7dQty:  Math.round(total7),
+                    avgDailySales: Math.round(daily90 * 10) / 10,
+                    avgDailySalesLast30d: Math.round(daily30 * 10) / 10,
+                    trend,                     // 'accelerating' | 'stable' | 'declining'
+                    weeklyPattern: Object.fromEntries(dayNames.map((d, i) => [d, weeklyPattern[i]])),
+                    dataSource: rows.length > 0 ? 'firestore' : 'none'
+                };
+            }
+
+            /**
+             * Inject an "AI Optimize Quantities" button inside the PO modal.
+             * Only appears when opened from stock alerts (pre-filled products).
+             */
+            _injectAIOptimizeButton(prefillProductIds) {
+                document.getElementById('po-ai-optimize-btn')?.remove();
+
+                const btn = document.createElement('button');
+                btn.id = 'po-ai-optimize-btn';
+                btn.type = 'button';
+                btn.style.cssText = 'background:#6f42c1;color:#fff;border:none;padding:0.5rem 1rem;border-radius:6px;cursor:pointer;font-size:0.9rem;display:flex;align-items:center;gap:0.4rem;margin-bottom:0.75rem;';
+                btn.innerHTML = '<i class="fas fa-robot"></i> AI Optimize Quantities';
+                btn.title = 'Analyses full sales history, trends, and day-of-week patterns to suggest optimal order quantities';
+                btn.addEventListener('click', () => this._requestAIOrderQuantities(prefillProductIds));
+
+                const itemsList = document.getElementById('po-items-list');
+                if (itemsList) itemsList.insertAdjacentElement('beforebegin', btn);
+            }
+
+            /**
+             * Await the prefetched Firestore sales data, build rich velocity summaries,
+             * send to /api/ai/po-suggest, and apply results to the open PO form rows.
+             */
+            async _requestAIOrderQuantities(prefillProductIds) {
+                const btn = document.getElementById('po-ai-optimize-btn');
+                if (btn) {
+                    btn.disabled = true;
+                    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Fetching sales history...';
+                }
+
+                try {
+                    const products = prefillProductIds
+                        .map(id => state.allProducts.find(p => p.id === id))
+                        .filter(Boolean);
+                    if (products.length === 0) return;
+
+                    // Await the background prefetch started when the modal opened.
+                    // If it already resolved, this returns immediately.
+                    if (btn) btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Analysing trends...';
+                    const salesMap = this._poSalesDataPromise
+                        ? await this._poSalesDataPromise
+                        : await this._fetchProductSalesHistory(prefillProductIds);
+
+                    // Build richer payload — full velocity + trend + day-of-week pattern
+                    const productSummaries = products.map(p => {
+                        const rows = salesMap.get(p.id) || [];
+                        return this._buildProductVelocity(p, rows);
+                    });
+
+                    if (btn) btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Asking AI...';
+
+                    const headers = { 'Content-Type': 'application/json' };
+                    try {
+                        const token = await auth.currentUser?.getIdToken?.();
+                        if (token) headers.Authorization = `Bearer ${token}`;
+                    } catch (_) {}
+
+                    const BACKEND_URL = window.BACKEND_URL || '';
+                    const res = await fetch(`${BACKEND_URL}/api/ai/po-suggest`, {
+                        method: 'POST',
+                        headers,
+                        body: JSON.stringify({ products: productSummaries })
+                    });
+
+                    if (!res.ok) throw new Error(`AI request failed (${res.status})`);
+                    const data = await res.json();
+
+                    const suggestions = Array.isArray(data.suggestions) ? data.suggestions : [];
+                    const usedFallback = data.mode !== 'ai';
+
+                    this._applyPOSuggestions(suggestions, products, usedFallback);
+
+                } catch (err) {
+                    console.error('AI order optimization failed:', err);
+                    // Last-resort: rule-based quantities from stockAlerts
+                    const products = prefillProductIds
+                        .map(id => state.allProducts.find(p => p.id === id))
+                        .filter(Boolean);
+                    const fallbackSuggestions = products.map(p => ({
+                        name: p.name,
+                        qty: window.stockAlerts?.suggestOrderQuantity?.(p)?.qty
+                            || Math.max(1, parseInt(p.minStock) || 10),
+                        reason: '45-day sales-velocity estimate (AI unavailable)'
+                    }));
+                    this._applyPOSuggestions(fallbackSuggestions, products, true);
+                    Utils.showToast('AI unavailable — applied rule-based estimates', 'warning');
+                }
+            }
+
+            /**
+             * Write suggestion quantities and inline hint labels into the open PO form rows.
+             * Shared by both the success and catch paths.
+             */
+            _applyPOSuggestions(suggestions, products, usedFallback) {
+                const btn = document.getElementById('po-ai-optimize-btn');
+                let applied = 0;
+
+                const rows = document.querySelectorAll('.po-item-row');
+                rows.forEach(row => {
+                    const idx = row.dataset.rowIndex;
+                    const nameEl = document.getElementById(`po-product-search-${idx}`);
+                    const qtyEl  = document.getElementById(`po-quantity-${idx}`);
+                    if (!nameEl || !qtyEl) return;
+
+                    row.querySelector('.po-ai-hint')?.remove();
+
+                    const rowName = nameEl.value.trim().toLowerCase();
+                    const match = suggestions.find(s => s.name.toLowerCase() === rowName)
+                        || suggestions.find(s =>
+                            rowName.includes(s.name.toLowerCase()) ||
+                            s.name.toLowerCase().includes(rowName)
+                        );
+
+                    if (!match || match.qty <= 0) return;
+
+                    qtyEl.value = match.qty;
+                    qtyEl.style.borderColor = usedFallback ? '#e67e00' : '#6f42c1';
+                    qtyEl.style.boxShadow = usedFallback
+                        ? '0 0 0 2px rgba(230,126,0,0.25)'
+                        : '0 0 0 2px rgba(111,66,193,0.25)';
+
+                    const hint = document.createElement('div');
+                    hint.className = 'po-ai-hint';
+                    hint.style.cssText = [
+                        'font-size:0.75rem',
+                        'margin-top:0.25rem',
+                        'padding:0.25rem 0.5rem',
+                        'border-radius:4px',
+                        'line-height:1.4',
+                        `background:${usedFallback ? '#fff3e0' : '#f3e8ff'}`,
+                        `color:${usedFallback ? '#b45309' : '#5b21b6'}`,
+                        `border-left:3px solid ${usedFallback ? '#e67e00' : '#6f42c1'}`,
+                    ].join(';');
+
+                    // Show trend badge if available
+                    const trendIcon = { accelerating: '📈', declining: '📉', stable: '➡️' };
+                    const trendTag = match.trend
+                        ? ` <span style="opacity:0.75">${trendIcon[match.trend] || ''} ${match.trend}</span>`
+                        : '';
+
+                    hint.innerHTML = `<i class="fas fa-${usedFallback ? 'chart-line' : 'robot'}"></i> ${match.reason || 'AI recommendation'}${trendTag}`;
+                    qtyEl.insertAdjacentElement('afterend', hint);
+
+                    qtyEl.addEventListener('input', () => {
+                        qtyEl.style.borderColor = '';
+                        qtyEl.style.boxShadow = '';
+                        hint.remove();
+                    }, { once: true });
+
+                    applied++;
+                });
+
+                this.calculatePOTotals();
+
+                if (btn) {
+                    btn.disabled = false;
+                    if (usedFallback) {
+                        btn.innerHTML = `<i class="fas fa-chart-line"></i> Applied estimates (${applied}/${products.length})`;
+                        btn.style.background = '#e67e00';
+                    } else {
+                        btn.innerHTML = `<i class="fas fa-check"></i> AI Applied (${applied}/${products.length})`;
+                        btn.style.background = '#28a745';
+                    }
+                }
+
+                if (!usedFallback) {
+                    Utils.showToast(`AI optimized quantities for ${applied} product${applied !== 1 ? 's' : ''}`, 'success');
+                }
+            }
+
             addPOItemRow(prefillProduct = null) {
                 const container = document.getElementById('po-items-list');
                 if (!container) return;
                 
                 const rowIndex = container.children.length;
-                const suggestedQty = prefillProduct ? Math.max(1, parseInt(prefillProduct.minStock) || 10) : 1;
+                const suggestedQty = prefillProduct
+                    ? (window.stockAlerts?.suggestOrderQuantity?.(prefillProduct)?.qty || Math.max(1, parseInt(prefillProduct.minStock) || 10))
+                    : 1;
                 const prefillCost = prefillProduct ? (parseFloat(prefillProduct.cost) || 0) : '';
                 const prefillName = prefillProduct ? (prefillProduct.name || '') : '';
                 const prefillId = prefillProduct ? (prefillProduct.id || '') : '';
@@ -4428,14 +4989,13 @@ class AppController {
                                style="width: 100%; background: #e9ecef; font-weight: bold;">
                     </div>
                     <div style="padding-top: 1.75rem;">
-                        ${rowIndex > 0 ? `
-                            <button type="button" 
-                                    class="danger" 
-                                    onclick="appController.removePOItemRow(${rowIndex})"
-                                    style="width: 100%; padding: 0.5rem;">
-                                <i class="fas fa-trash"></i>
-                            </button>
-                        ` : '<div style="height: 38px;"></div>'}
+                        <button type="button"
+                                class="po-remove-btn danger"
+                                onclick="appController.removePOItemRow(${rowIndex})"
+                                title="Remove item"
+                                style="width: 100%; padding: 0.5rem;">
+                            <i class="fas fa-trash"></i>
+                        </button>
                     </div>
                 `;
                 
@@ -4556,6 +5116,10 @@ class AppController {
             }
 
             removePOItemRow(rowIndex) {
+                const container = document.getElementById('po-items-list');
+                if (!container) return;
+                // Always keep at least one row
+                if (container.children.length <= 1) return;
                 const row = document.querySelector(`.po-item-row[data-row-index="${rowIndex}"]`);
                 if (row) {
                     row.remove();
@@ -4566,10 +5130,40 @@ class AppController {
 
             renumberPOItems() {
                 const rows = document.querySelectorAll('.po-item-row');
+                // Suffixes that must stay in sync with data-row-index
+                const suffixes = [
+                    'po-product-search',
+                    'po-product-dropdown',
+                    'po-product-id',
+                    'po-product-is-new',
+                    'po-quantity',
+                    'po-cost',
+                    'po-total',
+                ];
+
                 rows.forEach((row, index) => {
+                    const oldIndex = parseInt(row.dataset.rowIndex, 10);
                     row.dataset.rowIndex = index;
+
+                    // Re-stamp every input/div ID that encodes the old row index
+                    if (oldIndex !== index) {
+                        suffixes.forEach(prefix => {
+                            const el = row.querySelector(`#${prefix}-${oldIndex}`);
+                            if (el) el.id = `${prefix}-${index}`;
+                        });
+                    }
+
+                    // Update product label
                     const label = row.querySelector('label');
                     if (label) label.textContent = `Product ${index + 1} *`;
+
+                    // Re-wire remove button
+                    const removeBtn = row.querySelector('.po-remove-btn');
+                    if (removeBtn) {
+                        removeBtn.onclick = () => appController.removePOItemRow(index);
+                        removeBtn.disabled = rows.length === 1;
+                        removeBtn.style.opacity = rows.length === 1 ? '0.35' : '1';
+                    }
                 });
             }
 
@@ -4806,18 +5400,51 @@ class AppController {
                             <td>${new Date(po.orderDate).toLocaleDateString()}</td>
                             <td><strong>${Utils.formatCurrency(po.totalAmount)}</strong></td>
                             <td><span class="status-badge ${statusClass}">${po.status}</span></td>
-                            <td>
-                                ${po.status === 'pending' ? 
+                            <td class="actions">
+                                ${po.status === 'pending' ?
                                     `<button onclick="appController.openReceivePOModal('${po.id}')" class="btn-sm" style="padding: 0.25rem 0.5rem; font-size: 0.85rem; background: #28a745;">📦 Receive</button>` :
                                     `<button onclick="appController.viewPODetails('${po.id}')" class="btn-sm" style="padding: 0.25rem 0.5rem; font-size: 0.85rem;">👁️ View</button>`
                                 }
-                                <button onclick="window.appController?.exportPOPdf('${po.id}')" class="btn-sm" style="padding: 0.25rem 0.5rem; font-size: 0.85rem; background: #dc3545; color: white;" title="Export PDF">
+                                <button onclick="window.appController?.exportPOPdf('${po.id}')" class="btn-sm" style="padding: 0.25rem 0.5rem; font-size: 0.85rem; background: #6c757d; color: white;" title="Export PDF">
                                     <i class="fas fa-file-pdf"></i>
+                                </button>
+                                <button onclick="appController.deletePurchaseOrder('${po.id}', '${po.poNumber?.replace(/'/g, "\\'")}')" class="btn-sm" style="padding: 0.25rem 0.5rem; font-size: 0.85rem; background: #dc3545; color: white;" title="Delete PO">
+                                    <i class="fas fa-trash"></i>
                                 </button>
                             </td>
                         </tr>
                     `;
                 }).join('');
+            }
+
+            async deletePurchaseOrder(poId, poNumber) {
+                const confirmed = window.confirm(
+                    `Delete Purchase Order "${poNumber}"?\n\nThis action cannot be undone. The PO and all its data will be permanently removed.`
+                );
+                if (!confirmed) return;
+
+                Utils.showSpinner();
+                try {
+                    await deleteDoc(doc(db, 'purchase_orders', poId));
+
+                    // Remove from local state
+                    state.allPurchaseOrders = state.allPurchaseOrders.filter(po => po.id !== poId);
+
+                    this.renderPurchaseOrders();
+                    window.stockAlerts?.refreshAlertWidget?.();
+                    Utils.showToast(`Purchase Order "${poNumber}" deleted`, 'success');
+
+                    ActivityLogger.log('delete_purchase_order', {
+                        poId,
+                        poNumber,
+                        deletedBy: state.currentUser?.email || 'unknown'
+                    });
+                } catch (error) {
+                    console.error('Error deleting PO:', error);
+                    Utils.showToast('Failed to delete purchase order', 'error');
+                } finally {
+                    Utils.hideSpinner();
+                }
             }
 
             openReceivePOModal(poId) {
@@ -4935,11 +5562,11 @@ class AppController {
                 document.getElementById('receive-po-modal').style.display = 'block';
             }
 
-            removeReceiveItem(index) {
+            async removeReceiveItem(index) {
                 const row = document.querySelector(`.receive-item-row[data-index="${index}"]`);
                 if (row) {
                     const productName = row.querySelector('.item-product-name').value;
-                    if (confirm(`Remove "${productName}" from this receipt? This item was not fulfilled by the supplier.`)) {
+                    if (await UX.confirm({ title: 'Remove Item', body: `Remove "${productName}" from this receipt? Mark it as not fulfilled by the supplier.`, confirmLabel: 'Remove', variant: 'warning' })) {
                         row.remove();
                         Utils.showToast('Item removed from receipt', 'info');
                     }
@@ -5308,7 +5935,7 @@ class AppController {
             }
 
             async deleteCustomer(customerId) {
-                if (!confirm('Delete this customer? This will not delete their purchase history.')) return;
+                if (!await UX.confirm({ title: 'Delete Customer', body: 'The customer will be removed. Their purchase history will remain.', confirmLabel: 'Delete', variant: 'danger' })) return;
                 
                 Utils.showSpinner();
                 try {
@@ -5342,7 +5969,23 @@ class AppController {
                 }
 
                 if (filtered.length === 0) {
-                    tbody.innerHTML = '<tr><td colspan="6" class="no-data">No customers found</td></tr>';
+                    const emptyCell = document.createElement('td');
+                    emptyCell.colSpan = 6;
+                    const emptyRow = document.createElement('tr');
+                    emptyRow.appendChild(emptyCell);
+                    tbody.innerHTML = '';
+                    tbody.appendChild(emptyRow);
+                    if (search) {
+                        UX.noResults(emptyCell, search);
+                    } else {
+                        UX.emptyState(emptyCell, {
+                            icon: 'fa-users',
+                            title: 'No customers yet',
+                            desc: 'Add customers to track sales history and balances.',
+                            actionLabel: 'Add Customer',
+                            onAction: () => document.getElementById('add-customer-btn')?.click()
+                        });
+                    }
                     return;
                 }
 
@@ -5364,11 +6007,11 @@ class AppController {
                     
                     const row = document.createElement('tr');
                     row.innerHTML = `
-                        <td>${customer.name}</td>
-                        <td>${customer.email || '-'}</td>
-                        <td>${customer.phone || '-'}</td>
-                        <td>${Utils.formatCurrency(totalPurchases)}</td>
-                        <td>${lastPurchase}</td>
+                        <td data-label="Name">${customer.name}</td>
+                        <td data-label="Email">${customer.email || '-'}</td>
+                        <td data-label="Phone">${customer.phone || '-'}</td>
+                        <td data-label="Total Purchases">${Utils.formatCurrency(totalPurchases)}</td>
+                        <td data-label="Last Purchase">${lastPurchase}</td>
                         <td class="actions">
                             <button onclick="appController.viewCustomerSales('${customer.id}')" title="View Sales History"><i class="fas fa-list"></i></button>
                             <button onclick="appController.editCustomer('${customer.id}')" title="Edit"><i class="fas fa-edit"></i></button>
@@ -5725,7 +6368,11 @@ class AppController {
                     .slice(0, 10);
                 
                 if (recentSales.length === 0) {
-                    container.innerHTML = '<div class="no-data">No recent sales</div>';
+                    UX.emptyState(container, {
+                        icon: 'fa-shopping-bag',
+                        title: 'No sales yet',
+                        desc: 'Sales will appear here as you record them.'
+                    });
                     return;
                 }
                 
@@ -5898,6 +6545,103 @@ class AppController {
                 this.updateSaleTotal();
             }
             
+            /** Export the currently open Create PO modal as a PDF without saving to Firestore */
+            exportCurrentPOAsPDF() {
+                // Collect form values
+                const supplierEl = document.getElementById('po-supplier');
+                const supplierName = supplierEl?.options[supplierEl.selectedIndex]?.text || 'N/A';
+                const poDate     = document.getElementById('po-date')?.value || new Date().toISOString().slice(0, 10);
+                const notes      = document.getElementById('po-notes')?.value || '';
+                const subtotal   = document.getElementById('po-subtotal')?.value || '0.00';
+                const taxAmount  = document.getElementById('po-tax-amount')?.value || '0.00';
+                const shipping   = document.getElementById('po-shipping')?.value || '0';
+                const grandTotal = document.getElementById('po-grand-total')?.value || '0.00';
+
+                // Collect rows
+                const rows = document.querySelectorAll('.po-item-row');
+                let itemsHTML = '';
+                rows.forEach((row, i) => {
+                    const idx  = row.dataset.rowIndex;
+                    const name = document.getElementById(`po-product-search-${idx}`)?.value || '';
+                    const qty  = document.getElementById(`po-quantity-${idx}`)?.value || '0';
+                    if (!name) return;
+                    itemsHTML += `
+                        <tr>
+                            <td style="padding:0.5rem 0.75rem;border-bottom:1px solid #f1f5f9;">${i + 1}</td>
+                            <td style="padding:0.5rem 0.75rem;border-bottom:1px solid #f1f5f9;">${name}</td>
+                            <td style="padding:0.5rem 0.75rem;border-bottom:1px solid #f1f5f9;text-align:center;">${qty}</td>
+                        </tr>`;
+                });
+
+                const businessName = document.getElementById('business-name')?.value
+                    || document.querySelector('[data-setting="name"]')?.textContent
+                    || 'Ultimate Bookkeeping';
+
+                const html = `
+                    <div style="font-family:'Open Sans',sans-serif;padding:2rem;max-width:800px;margin:auto;color:#1e293b;">
+                        <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:2rem;">
+                            <div>
+                                <h1 style="margin:0;font-size:1.6rem;color:#1E3A8A;">PURCHASE ORDER</h1>
+                                <p style="margin:0.25rem 0 0;color:#64748b;font-size:0.9rem;">Date: ${poDate}</p>
+                            </div>
+                            <div style="text-align:right;">
+                                <p style="margin:0;font-weight:700;font-size:1rem;">${businessName}</p>
+                            </div>
+                        </div>
+
+                        <div style="margin-bottom:1.5rem;padding:1rem;background:#f8fafc;border-radius:8px;">
+                            <p style="margin:0;font-size:0.85rem;color:#64748b;text-transform:uppercase;letter-spacing:0.05em;font-weight:600;">Supplier</p>
+                            <p style="margin:0.25rem 0 0;font-weight:600;">${supplierName}</p>
+                        </div>
+
+                        <table style="width:100%;border-collapse:collapse;margin-bottom:1.5rem;">
+                            <thead>
+                                <tr style="background:#1E3A8A;color:#fff;">
+                                    <th style="padding:0.6rem 0.75rem;text-align:left;font-size:0.8rem;">#</th>
+                                    <th style="padding:0.6rem 0.75rem;text-align:left;font-size:0.8rem;">Product</th>
+                                    <th style="padding:0.6rem 0.75rem;text-align:center;font-size:0.8rem;">Qty</th>
+                                </tr>
+                            </thead>
+                            <tbody>${itemsHTML}</tbody>
+                        </table>
+
+                        <div style="display:flex;justify-content:flex-end;margin-bottom:1.5rem;">
+                            <table style="min-width:240px;border-collapse:collapse;">
+                                <tr><td style="padding:0.4rem 0.75rem;color:#64748b;">Subtotal</td><td style="padding:0.4rem 0.75rem;text-align:right;">${Utils.formatCurrency(parseFloat(subtotal) || 0)}</td></tr>
+                                <tr><td style="padding:0.4rem 0.75rem;color:#64748b;">Tax</td><td style="padding:0.4rem 0.75rem;text-align:right;">${Utils.formatCurrency(parseFloat(taxAmount) || 0)}</td></tr>
+                                <tr><td style="padding:0.4rem 0.75rem;color:#64748b;">Shipping</td><td style="padding:0.4rem 0.75rem;text-align:right;">${Utils.formatCurrency(parseFloat(shipping) || 0)}</td></tr>
+                                <tr style="border-top:2px solid #1E3A8A;">
+                                    <td style="padding:0.5rem 0.75rem;font-weight:700;font-size:1rem;">Grand Total</td>
+                                    <td style="padding:0.5rem 0.75rem;text-align:right;font-weight:700;font-size:1rem;color:#1E3A8A;">${Utils.formatCurrency(parseFloat(grandTotal) || 0)}</td>
+                                </tr>
+                            </table>
+                        </div>
+
+                        ${notes ? `<div style="padding:1rem;background:#f8fafc;border-radius:8px;"><p style="margin:0;font-size:0.85rem;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;">Notes</p><p style="margin:0.25rem 0 0;">${notes}</p></div>` : ''}
+                    </div>`;
+
+                const opt = {
+                    margin: [0.4, 0.4, 0.4, 0.4],
+                    filename: `Purchase-Order-${supplierName.replace(/\s+/g, '-')}-${poDate}.pdf`,
+                    image: { type: 'jpeg', quality: 0.97 },
+                    html2canvas: { scale: 2 },
+                    jsPDF: { unit: 'in', format: 'a4', orientation: 'portrait' }
+                };
+
+                const container = document.createElement('div');
+                container.innerHTML = html;
+                document.body.appendChild(container);
+
+                if (typeof html2pdf !== 'undefined') {
+                    html2pdf().set(opt).from(container).save().then(() => {
+                        document.body.removeChild(container);
+                    });
+                } else {
+                    document.body.removeChild(container);
+                    Utils.showToast('PDF library not loaded', 'error');
+                }
+            }
+
             /** Open Create PO modal with one or more products pre-filled (from stock alerts or out-of-stock prompt) */
             openCreatePOForProduct(productId) {
                 this.openCreatePOForProducts([productId]);
@@ -6104,6 +6848,9 @@ class AppController {
                             if (format === 'pdf') window.pdfExport?.generateSalesReport(dateRange);
                             else if (format === 'csv') window.exportService?.exportSalesReport(dateRange.start, dateRange.end);
                             else if (format === 'excel') window.exportService?.exportComprehensiveReport(dateRange.start || '2000-01-01', dateRange.end || '2099-12-31');
+                            break;
+                        case 'product-sale-history':
+                            if (format === 'pdf') window.pdfExport?.generateProductSaleHistoryPdf(dateRange);
                             break;
                         case 'inventory':
                             if (format === 'pdf') window.pdfExport?.generateInventoryReport(dateRange);
@@ -8361,6 +9108,31 @@ class AppController {
                 } else {
                     root.removeAttribute('data-theme');
                 }
+                this._syncThemePicker(themeKey || 'classic');
+            }
+
+            _syncThemePicker(themeKey) {
+                const picker = document.getElementById('theme-picker');
+                const select = document.getElementById('theme-select');
+                if (!picker) return;
+                picker.querySelectorAll('.theme-swatch').forEach(btn => {
+                    const active = btn.dataset.themeValue === themeKey;
+                    btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+                    btn.classList.toggle('active', active);
+                });
+                if (select) select.value = themeKey;
+            }
+
+            _initThemePicker() {
+                const picker = document.getElementById('theme-picker');
+                if (!picker || picker.dataset.initialized) return;
+                picker.dataset.initialized = 'true';
+                picker.addEventListener('click', e => {
+                    const btn = e.target.closest('.theme-swatch');
+                    if (!btn) return;
+                    const val = btn.dataset.themeValue;
+                    this.applyTheme(val);
+                });
             }
 
             isDebtPayment(expense) { return isDebtPayment(expense); }
@@ -8394,6 +9166,8 @@ class AppController {
                             document.getElementById('currency-select').value = settings.currency || 'GHS (₵)';
                             const themeEl = document.getElementById('theme-select');
                             if (themeEl) themeEl.value = settings.theme || 'classic';
+                            this._initThemePicker();
+                            this._syncThemePicker(settings.theme || 'classic');
                             document.getElementById('low-stock-threshold').value = settings.lowStockThreshold || 10;
                             document.getElementById('email-notifications').checked = settings.emailNotifications || false;
                             document.getElementById('daily-reports').checked = settings.dailyReports || false;
@@ -9157,7 +9931,7 @@ class AppController {
                 const outlet = state.allOutlets.find(o => o.id === outletId);
                 if (!outlet) return;
                 
-                if (!confirm(`Delete outlet "${outlet.name}"? This will delete all associated data including consignments and settlements. This action cannot be undone.`)) {
+                if (!await UX.confirm({ title: `Delete "${outlet.name}"`, body: 'All consignments and settlements for this outlet will also be permanently deleted.', confirmLabel: 'Delete Outlet', variant: 'danger' })) {
                     return;
                 }
                 
@@ -9715,7 +10489,7 @@ class AppController {
                 const skipPrompt = arguments[2];
                 
                 if (!skipPrompt) {
-                    if (!confirm('Confirm receipt of this consignment? This will add the items to outlet inventory.')) {
+                    if (!await UX.confirm({ title: 'Confirm Consignment Receipt', body: 'Items will be added to your outlet inventory.', confirmLabel: 'Confirm Receipt', variant: 'warning' })) {
                         return;
                     }
                 }
@@ -10386,7 +11160,7 @@ class AppController {
 
                     
                     if (existingSnap.exists()) {
-                        if (!confirm(`Settlement for ${period} already exists. Regenerate?`)) {
+                        if (!await UX.confirm({ title: 'Regenerate Settlement', body: `A settlement for ${period} already exists. Regenerating will overwrite it.`, confirmLabel: 'Regenerate', variant: 'warning' })) {
                             Utils.hideSpinner();
                             return;
                         }
@@ -11525,99 +12299,102 @@ class AppController {
             }
 
             displayGlobalSearchResults(results, query) {
+                // Element may have been moved to <body> — always re-query by id
                 const container = document.getElementById('global-search-results');
                 if (!container) return;
-                
+
+                const closeResults = () => { container.style.display = 'none'; };
+
+                const navigateAndFilter = (section, inputId, value) => {
+                    this.navigateToSection(section);
+                    const el = document.getElementById(inputId);
+                    if (el) { el.value = value; el.dispatchEvent(new Event('input')); }
+                    closeResults();
+                };
+
                 let html = '';
                 let totalResults = 0;
-                
+
                 if (results.products.length > 0) {
-                    html += '<div style="padding: 1rem; border-bottom: 1px solid #eee;"><h4 style="margin: 0 0 0.5rem 0; color: #007bff;">Products</h4>';
+                    html += '<div class="search-group-label">Products</div>';
                     results.products.slice(0, 5).forEach(product => {
+                        const safeId = String(product.id || '').replace(/'/g, "\\'");
+                        const safeName = String(product.name || '').replace(/'/g, "\\'");
                         html += `
-                            <div style="padding: 0.5rem; cursor: pointer; border-radius: 4px;" 
-                                 onclick="appController.navigateToSection('inventory'); document.getElementById('inventory-search').value='${product.name}'; document.getElementById('global-search-results').style.display='none';"
-                                 onmouseover="this.style.background='#f8f9fa'" 
-                                 onmouseout="this.style.background='transparent'">
-                                <strong>${product.name}</strong> - ${product.category} (Stock: ${product.quantity})
-                            </div>
-                        `;
+                            <div class="search-result-item"
+                                 onclick="appController.navigateToSection('inventory'); (function(){var el=document.getElementById('inventory-search');if(el){el.value='${safeName}';el.dispatchEvent(new Event('input'));}document.getElementById('global-search-results').style.display='none';})()">
+                                <strong>${product.name}</strong>
+                                <span class="search-meta"> · ${product.category || 'Uncategorised'} · Stock: ${product.quantity}</span>
+                            </div>`;
                     });
-                    if (results.products.length > 5) {
-                        html += `<div style="padding: 0.5rem; color: #666; font-size: 0.9rem;">+${results.products.length - 5} more</div>`;
-                    }
-                    html += '</div>';
+                    if (results.products.length > 5) html += `<div class="search-more">+${results.products.length - 5} more products</div>`;
                     totalResults += results.products.length;
                 }
-                
+
                 if (results.sales.length > 0) {
-                    html += '<div style="padding: 1rem; border-bottom: 1px solid #eee;"><h4 style="margin: 0 0 0.5rem 0; color: #28a745;">Sales</h4>';
+                    html += '<div class="search-group-label">Sales</div>';
                     results.sales.slice(0, 5).forEach(sale => {
                         const subtotal = sale.quantity * sale.price;
                         const discounted = subtotal * (1 - (sale.discount || 0) / 100);
                         const total = discounted * (1 + (sale.tax || 0) / 100);
-                        
+                        const safeCust = String(sale.customer || '').replace(/'/g, "\\'");
                         html += `
-                            <div style="padding: 0.5rem; cursor: pointer; border-radius: 4px;" 
-                                 onclick="appController.navigateToSection('sales'); document.getElementById('sales-customer-search').value='${sale.customer}'; document.getElementById('global-search-results').style.display='none';"
-                                 onmouseover="this.style.background='#f8f9fa'" 
-                                 onmouseout="this.style.background='transparent'">
-                                ${sale.date} - <strong>${sale.customer}</strong> - ${sale.product} - ${Utils.formatCurrency(total)}
-                            </div>
-                        `;
+                            <div class="search-result-item"
+                                 onclick="appController.navigateToSection('sales'); (function(){var el=document.getElementById('sales-customer-search');if(el){el.value='${safeCust}';el.dispatchEvent(new Event('input'));}document.getElementById('global-search-results').style.display='none';})()">
+                                <strong>${sale.customer}</strong> · ${sale.product}
+                                <span class="search-meta"> · ${sale.date} · ${Utils.formatCurrency(total)}</span>
+                            </div>`;
                     });
-                    if (results.sales.length > 5) {
-                        html += `<div style="padding: 0.5rem; color: #666; font-size: 0.9rem;">+${results.sales.length - 5} more</div>`;
-                    }
-                    html += '</div>';
+                    if (results.sales.length > 5) html += `<div class="search-more">+${results.sales.length - 5} more sales</div>`;
                     totalResults += results.sales.length;
                 }
-                
+
                 if (results.customers.length > 0) {
-                    html += '<div style="padding: 1rem; border-bottom: 1px solid #eee;"><h4 style="margin: 0 0 0.5rem 0; color: #17a2b8;">Customers</h4>';
+                    html += '<div class="search-group-label">Customers</div>';
                     results.customers.slice(0, 5).forEach(customer => {
+                        const safeName = String(customer.name || '').replace(/'/g, "\\'");
                         html += `
-                            <div style="padding: 0.5rem; cursor: pointer; border-radius: 4px;" 
-                                 onclick="appController.navigateToSection('customers'); document.getElementById('customer-search').value='${customer.name}'; document.getElementById('global-search-results').style.display='none';"
-                                 onmouseover="this.style.background='#f8f9fa'" 
-                                 onmouseout="this.style.background='transparent'">
-                                <strong>${customer.name}</strong> - ${customer.email || ''} ${customer.phone || ''}
-                            </div>
-                        `;
+                            <div class="search-result-item"
+                                 onclick="appController.navigateToSection('customers'); (function(){var el=document.getElementById('customer-search');if(el){el.value='${safeName}';el.dispatchEvent(new Event('input'));}document.getElementById('global-search-results').style.display='none';})()">
+                                <strong>${customer.name}</strong>
+                                <span class="search-meta">${customer.email ? ' · ' + customer.email : ''}${customer.phone ? ' · ' + customer.phone : ''}</span>
+                            </div>`;
                     });
-                    if (results.customers.length > 5) {
-                        html += `<div style="padding: 0.5rem; color: #666; font-size: 0.9rem;">+${results.customers.length - 5} more</div>`;
-                    }
-                    html += '</div>';
+                    if (results.customers.length > 5) html += `<div class="search-more">+${results.customers.length - 5} more customers</div>`;
                     totalResults += results.customers.length;
                 }
-                
+
                 const canViewExpenses = state.userRole !== 'outlet_manager';
                 if (canViewExpenses && results.expenses.length > 0) {
-                    html += '<div style="padding: 1rem;"><h4 style="margin: 0 0 0.5rem 0; color: #dc3545;">Expenses</h4>';
+                    html += '<div class="search-group-label">Expenses</div>';
                     results.expenses.slice(0, 5).forEach(expense => {
+                        const safeDesc = String(expense.description || '').replace(/'/g, "\\'");
                         html += `
-                            <div style="padding: 0.5rem; cursor: pointer; border-radius: 4px;" 
-                                 onclick="appController.navigateToSection('expenses'); document.getElementById('expense-search').value='${expense.description}'; document.getElementById('global-search-results').style.display='none';"
-                                 onmouseover="this.style.background='#f8f9fa'" 
-                                 onmouseout="this.style.background='transparent'">
-                                ${expense.date} - <strong>${expense.description}</strong> - ${expense.category} - ${Utils.formatCurrency(expense.amount)}
-                            </div>
-                        `;
+                            <div class="search-result-item"
+                                 onclick="appController.navigateToSection('expenses'); (function(){var el=document.getElementById('expense-search');if(el){el.value='${safeDesc}';el.dispatchEvent(new Event('input'));}document.getElementById('global-search-results').style.display='none';})()">
+                                <strong>${expense.description}</strong> · ${expense.category || ''}
+                                <span class="search-meta"> · ${expense.date} · ${Utils.formatCurrency(expense.amount)}</span>
+                            </div>`;
                     });
-                    if (results.expenses.length > 5) {
-                        html += `<div style="padding: 0.5rem; color: #666; font-size: 0.9rem;">+${results.expenses.length - 5} more</div>`;
-                    }
-                    html += '</div>';
+                    if (results.expenses.length > 5) html += `<div class="search-more">+${results.expenses.length - 5} more expenses</div>`;
                     totalResults += results.expenses.length;
                 }
-                
+
                 if (totalResults === 0) {
-                    html = '<div style="padding: 1rem; text-align: center; color: #666;">No results found for "' + query + '"</div>';
+                    html = `<div class="search-no-results">No results for "<strong>${query}</strong>"</div>`;
                 }
-                
+
                 container.innerHTML = html;
                 container.style.display = 'block';
+
+                // Re-anchor the fixed dropdown to the input each time results show
+                const inputEl = document.getElementById('global-search');
+                if (inputEl) {
+                    const rect = inputEl.getBoundingClientRect();
+                    container.style.top   = `${rect.bottom + 6}px`;
+                    container.style.left  = `${rect.left}px`;
+                    container.style.width = `${rect.width}px`;
+                }
             }
 
             async backupAllData() {
@@ -11666,7 +12443,7 @@ class AppController {
             }
 
             async restoreFromBackup(file) {
-                if (!confirm('This will OVERWRITE all existing data. Are you sure you want to continue?')) {
+                if (!await UX.confirm({ title: 'Restore from Backup', body: 'This will overwrite ALL existing data. This cannot be undone.', confirmLabel: 'Yes, Restore', variant: 'danger' })) {
                     return;
                 }
                 
@@ -12113,7 +12890,7 @@ class AppController {
                             </div>
 
                             <div class="table-container">
-                            <table id="inventory-table">
+                            <table id="inventory-table" class="table-cards">
                                 <thead>
                                     <tr>
                                         <th>Product</th>
@@ -12271,7 +13048,7 @@ class AppController {
                         <div class="card">
                             <h2><i class="fas fa-chart-line"></i> Analytics Dashboard</h2>
                         </div>
-                        
+
                         <!-- Date Range Selector -->
                         <div class="date-range-selector">
                             <div class="date-range-presets">
@@ -12283,7 +13060,7 @@ class AppController {
                                 <button class="preset-btn" data-range="1year">1 Year</button>
                                 <button class="preset-btn" data-range="custom">Custom</button>
                             </div>
-                            
+
                             <div class="custom-date-range" style="display: none;">
                                 <label>From:</label>
                                 <input type="date" id="date-range-start">
@@ -12291,20 +13068,20 @@ class AppController {
                                 <input type="date" id="date-range-end">
                                 <button id="apply-custom-range"><i class="fas fa-check"></i> Apply</button>
                             </div>
-                            
+
                             <div class="comparison-toggle">
                                 <label>
                                     <input type="checkbox" id="compare-previous">
                                     Compare to previous period
                                 </label>
                             </div>
-                            
+
                             <div class="date-range-display">
                                 <i class="fas fa-calendar-alt"></i>
                                 <span id="current-range-display">Last 30 Days</span>
                             </div>
                         </div>
-                        
+
                         <div class="analytics-grid">
                             <div class="analytics-card">
                                 <h3>Daily Revenue Trend</h3>
@@ -12326,8 +13103,8 @@ class AppController {
                                 <h3>Operating Expenses Breakdown</h3>
                                 <canvas id="expenses-breakdown-chart"></canvas>
                             </div>
-                
-                            
+
+
                         </div>
                     </section>
                 `;
@@ -12355,7 +13132,7 @@ class AppController {
                                 <input type="text" id="expense-search" placeholder="🔍 Search expenses">
                             </div>
                             <div class="table-container">
-                            <table id="expenses-table">
+                            <table id="expenses-table" class="table-cards">
                                 <thead>
                                     <tr>
                                         <th>Date</th>
@@ -12469,7 +13246,7 @@ class AppController {
                             </div>
                             
                             <div class="table-container">
-                            <table id="liabilities-table">
+                            <table id="liabilities-table" class="table-cards">
                                 <thead>
                                     <tr>
                                         <th>Creditor</th>
@@ -12602,7 +13379,7 @@ class AppController {
                                 </select>
                             </div>
                             <div class="table-container">
-                            <table id="customers-table">
+                            <table id="customers-table" class="table-cards">
                                 <thead>
                                     <tr>
                                         <th>Name</th>
@@ -12761,7 +13538,8 @@ class AppController {
                                 </select>
                                 
                                 <label>App Theme</label>
-                                <select id="theme-select">
+                                <!-- Hidden select keeps value for form submit / Firebase -->
+                                <select id="theme-select" style="display:none;" aria-hidden="true">
                                     <option value="classic">Classic</option>
                                     <option value="modern">Modern</option>
                                     <option value="corporate">Corporate</option>
@@ -12771,6 +13549,40 @@ class AppController {
                                     <option value="sunset">Sunset</option>
                                     <option value="dark">Dark</option>
                                 </select>
+                                <div class="theme-picker" id="theme-picker" role="radiogroup" aria-label="App Theme">
+                                    <button type="button" class="theme-swatch" data-theme-value="classic"    aria-pressed="true"  title="Classic">
+                                        <span class="ts-preview ts-classic"></span>
+                                        <span class="ts-label">Classic</span>
+                                    </button>
+                                    <button type="button" class="theme-swatch" data-theme-value="modern"     aria-pressed="false" title="Modern">
+                                        <span class="ts-preview ts-modern"></span>
+                                        <span class="ts-label">Modern</span>
+                                    </button>
+                                    <button type="button" class="theme-swatch" data-theme-value="corporate"  aria-pressed="false" title="Corporate">
+                                        <span class="ts-preview ts-corporate"></span>
+                                        <span class="ts-label">Corporate</span>
+                                    </button>
+                                    <button type="button" class="theme-swatch" data-theme-value="minimal"    aria-pressed="false" title="Minimal">
+                                        <span class="ts-preview ts-minimal"></span>
+                                        <span class="ts-label">Minimal</span>
+                                    </button>
+                                    <button type="button" class="theme-swatch" data-theme-value="ocean"      aria-pressed="false" title="Ocean">
+                                        <span class="ts-preview ts-ocean"></span>
+                                        <span class="ts-label">Ocean</span>
+                                    </button>
+                                    <button type="button" class="theme-swatch" data-theme-value="forest"     aria-pressed="false" title="Forest">
+                                        <span class="ts-preview ts-forest"></span>
+                                        <span class="ts-label">Forest</span>
+                                    </button>
+                                    <button type="button" class="theme-swatch" data-theme-value="sunset"     aria-pressed="false" title="Sunset">
+                                        <span class="ts-preview ts-sunset"></span>
+                                        <span class="ts-label">Sunset</span>
+                                    </button>
+                                    <button type="button" class="theme-swatch" data-theme-value="dark"       aria-pressed="false" title="Dark">
+                                        <span class="ts-preview ts-dark"></span>
+                                        <span class="ts-label">Dark</span>
+                                    </button>
+                                </div>
                                 
                                 <label>Low Stock Alert Threshold</label>
                                 <input type="number" id="low-stock-threshold" value="10" min="0">
@@ -13036,6 +13848,16 @@ class AppController {
                                         <button onclick="appController.generateReport('sales','pdf')" title="PDF"><i class="fas fa-file-pdf"></i></button>
                                         <button onclick="appController.generateReport('sales','csv')" title="CSV"><i class="fas fa-file-csv"></i></button>
                                         <button onclick="appController.generateReport('sales','excel')" title="Excel"><i class="fas fa-file-excel"></i></button>
+                                    </div>
+                                </div>
+                                <div class="report-card" data-report="product-sale-history">
+                                    <div class="report-icon" style="background:linear-gradient(135deg,#6610f2,#4a0fb8);"><i class="fas fa-history"></i></div>
+                                    <div class="report-info">
+                                        <h4>Product Sale History</h4>
+                                        <p>Per-product totals and every line item, grouped by product and date (PDF)</p>
+                                    </div>
+                                    <div class="report-actions">
+                                        <button onclick="appController.generateReport('product-sale-history','pdf')" title="PDF"><i class="fas fa-file-pdf"></i></button>
                                     </div>
                                 </div>
                                 <div class="report-card" data-report="inventory">

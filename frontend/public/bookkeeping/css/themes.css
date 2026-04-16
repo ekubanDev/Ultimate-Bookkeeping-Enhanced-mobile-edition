@@ -1,236 +1,767 @@
-/* ==================== THEME SYSTEM ====================
-   Apply by setting data-theme on <html> or <body>.
-   Admin selects theme in Settings; stored in Firebase and applied on load.
-   ==================================================== */
+/* ============================================================
+   THEME SYSTEM — Ultimate Bookkeeping
+   Source: UI/UX Pro Max Skill v2.5.0
 
-/* ---------- Default / Classic (current app look) ---------- */
+   Each theme sets:
+     • Legacy vars  (--bg, --primary, etc.)   — used by styles.css
+     • DS vars      (--ds-*)                   — used by design-system.css
+
+   Apply by setting data-theme on <html> or <body>.
+   Admin selects theme in Settings; stored in Firebase on load.
+   ============================================================ */
+
+/* ── 1. CLASSIC — Banking/Traditional Finance (default) ────── */
+/* Skill profile: trust navy · premium gold · WCAG AA          */
 :root,
 [data-theme="classic"] {
-    --bg: #f5f7fa;
-    --card-bg: #ffffff;
-    --text: #333333;
-    --text-muted: #666666;
-    --header-bg: linear-gradient(135deg, #007bff, #0056b3);
-    --nav-bg: #2c3e50;
-    --border: #dee2e6;
-    --hover: #0056b3;
-    --primary: #007bff;
-    --danger: #dc3545;
-    --success: #28a745;
-    --warning: #ffc107;
-    --info: #17a2b8;
-    --radius: 8px;
-    --shadow: 0 4px 6px rgba(0,0,0,0.1);
-    --font-family: 'Roboto', sans-serif;
+    color-scheme: light;
+
+    /* Legacy compat */
+    --bg:          #F8FAFC;
+    --card-bg:     #FFFFFF;
+    --text:        #020617;
+    --text-muted:  #64748B;
+    --header-bg:   linear-gradient(135deg, #0F172A 0%, #1E3A8A 100%);
+    --nav-bg:      #0F172A;
+    --border:      #E2E8F0;
+    --hover:       #1E3A8A;
+    --primary:     #1E3A8A;
+    --primary-light: rgba(30,58,138,0.08);
+    --danger:      #DC2626;
+    --success:     #15803D;
+    --warning:     #B45309;
+    --info:        #0369A1;
+    --radius:      12px;
+    --radius-sm:   6px;
+    --radius-lg:   16px;
+    --shadow:      0 1px 3px rgba(15,23,42,0.08), 0 1px 2px rgba(15,23,42,0.04);
+    --font-family: 'Open Sans', 'Segoe UI', sans-serif;
+
+    /* DS vars (design-system.css reads these) */
+    --ds-bg:           #F8FAFC;
+    --ds-bg-muted:     #E8ECF1;
+    --ds-card:         #FFFFFF;
+    --ds-card-border:  #E2E8F0;
+    --ds-fg:           #020617;
+    --ds-fg-muted:     #64748B;
+    --ds-fg-subtle:    #94A3B8;
+    --ds-primary:      #0F172A;
+    --ds-brand:        #1E3A8A;
+    --ds-brand-light:  rgba(30,58,138,0.08);
+    --ds-accent:       #A16207;
+    --ds-accent-light: rgba(161,98,7,0.10);
+    --ds-success:      #15803D;
+    --ds-success-bg:   #F0FDF4;
+    --ds-warning:      #B45309;
+    --ds-warning-bg:   #FFFBEB;
+    --ds-danger:       #DC2626;
+    --ds-danger-bg:    #FEF2F2;
+    --ds-info:         #0369A1;
+    --ds-info-bg:      #F0F9FF;
+    --ds-radius-sm:    6px;
+    --ds-radius:       12px;
+    --ds-radius-lg:    16px;
+    --ds-radius-xl:    20px;
+    --ds-shadow-sm:    0 1px 3px rgba(15,23,42,0.08), 0 1px 2px rgba(15,23,42,0.04);
+    --ds-shadow:       0 4px 6px rgba(15,23,42,0.07), 0 2px 4px rgba(15,23,42,0.04);
+    --ds-shadow-md:    0 10px 15px rgba(15,23,42,0.08), 0 4px 6px rgba(15,23,42,0.04);
+    --ds-shadow-lg:    0 20px 25px rgba(15,23,42,0.12), 0 8px 10px rgba(15,23,42,0.06);
+    --ds-shadow-xl:    0 40px 60px rgba(15,23,42,0.18);
+    --ds-font-heading: 'Poppins', 'Segoe UI', system-ui, sans-serif;
+    --ds-font-body:    'Open Sans', 'Segoe UI', system-ui, sans-serif;
+    --ds-font-mono:    'JetBrains Mono', 'Fira Code', 'SF Mono', monospace;
+    --ds-ease:         cubic-bezier(0.4,0,0.2,1);
+    --ds-ease-spring:  cubic-bezier(0.34,1.56,0.64,1);
+    --ds-duration-fast: 0.15s;
+    --ds-duration:      0.2s;
+    --ds-duration-slow: 0.35s;
+
+    /* Metric card accent stripe */
+    --ds-metric-stripe: linear-gradient(90deg, #1E3A8A 0%, #A16207 100%);
 }
 
-/* ---------- Modern (clean, high contrast) ---------- */
+/* ── 2. MODERN — Cinema Dark + Indigo accent ───────────────── */
+/* Skill profile: Modern Dark (Cinema Mobile) · Poppins/Inter   */
 [data-theme="modern"] {
-    --bg: #f0f2f5;
-    --card-bg: #ffffff;
-    --text: #1a1a2e;
-    --text-muted: #4a4a68;
-    --header-bg: linear-gradient(135deg, #16213e 0%, #0f3460 100%);
-    --nav-bg: #1a1a2e;
-    --border: #e4e6eb;
-    --hover: #e94560;
-    --primary: #e94560;
-    --danger: #e94560;
-    --success: #00b894;
-    --warning: #fdcb6e;
-    --info: #0984e3;
-    --radius: 12px;
-    --shadow: 0 2px 12px rgba(0,0,0,0.08);
-    --font-family: 'Inter', 'Segoe UI', sans-serif;
+    color-scheme: dark;
+
+    /* Legacy compat */
+    --bg:          #0F1923;
+    --card-bg:     #1A2535;
+    --text:        #EDEDEF;
+    --text-muted:  #8A8F98;
+    --header-bg:   linear-gradient(135deg, #050506 0%, #0A0A0C 100%);
+    --nav-bg:      #050506;
+    --border:      rgba(255,255,255,0.08);
+    --hover:       #5E6AD2;
+    --primary:     #5E6AD2;
+    --primary-light: rgba(94,106,210,0.15);
+    --danger:      #F87171;
+    --success:     #4ADE80;
+    --warning:     #FBBF24;
+    --info:        #38BDF8;
+    --radius:      16px;
+    --radius-sm:   8px;
+    --radius-lg:   20px;
+    --shadow:      0 4px 24px rgba(0,0,0,0.4);
+    --font-family: 'Poppins', 'Inter', system-ui, sans-serif;
+
+    /* DS vars */
+    --ds-bg:           #0F1923;
+    --ds-bg-muted:     #162032;
+    --ds-card:         #1A2535;
+    --ds-card-border:  rgba(255,255,255,0.08);
+    --ds-fg:           #EDEDEF;
+    --ds-fg-muted:     #8A8F98;
+    --ds-fg-subtle:    #64748B;
+    --ds-primary:      #0A0A0C;
+    --ds-brand:        #5E6AD2;
+    --ds-brand-light:  rgba(94,106,210,0.15);
+    --ds-accent:       #F59E0B;
+    --ds-accent-light: rgba(245,158,11,0.12);
+    --ds-success:      #4ADE80;
+    --ds-success-bg:   rgba(74,222,128,0.12);
+    --ds-warning:      #FBBF24;
+    --ds-warning-bg:   rgba(251,191,36,0.12);
+    --ds-danger:       #F87171;
+    --ds-danger-bg:    rgba(248,113,113,0.12);
+    --ds-info:         #38BDF8;
+    --ds-info-bg:      rgba(56,189,248,0.12);
+    --ds-radius-sm:    8px;
+    --ds-radius:       16px;
+    --ds-radius-lg:    20px;
+    --ds-radius-xl:    24px;
+    --ds-shadow-sm:    0 2px 8px rgba(0,0,0,0.3);
+    --ds-shadow:       0 4px 16px rgba(0,0,0,0.35);
+    --ds-shadow-md:    0 8px 24px rgba(0,0,0,0.4);
+    --ds-shadow-lg:    0 20px 40px rgba(0,0,0,0.5);
+    --ds-shadow-xl:    0 40px 60px rgba(0,0,0,0.6);
+    --ds-font-heading: 'Poppins', system-ui, sans-serif;
+    --ds-font-body:    'Poppins', system-ui, sans-serif;
+    --ds-metric-stripe: linear-gradient(90deg, #5E6AD2 0%, #F59E0B 100%);
 }
 
-/* ---------- Corporate (professional, blue-grey) ---------- */
+/* ── 3. CORPORATE — Deep Navy + Steel Blue ─────────────────── */
+/* Skill profile: Banking/Traditional Finance (authority variant)*/
 [data-theme="corporate"] {
-    --bg: #e8eef3;
-    --card-bg: #ffffff;
-    --text: #2d3748;
-    --text-muted: #718096;
-    --header-bg: linear-gradient(135deg, #2c5282 0%, #2b6cb0 100%);
-    --nav-bg: #2d3748;
-    --border: #cbd5e0;
-    --hover: #2b6cb0;
-    --primary: #2b6cb0;
-    --danger: #c53030;
-    --success: #276749;
-    --warning: #b7791f;
-    --info: #2b6cb0;
-    --radius: 6px;
-    --shadow: 0 1px 3px rgba(0,0,0,0.1);
+    color-scheme: light;
+
+    /* Legacy compat */
+    --bg:          #EEF2F7;
+    --card-bg:     #FFFFFF;
+    --text:        #1E293B;
+    --text-muted:  #64748B;
+    --header-bg:   linear-gradient(135deg, #1E3A5F 0%, #2563EB 100%);
+    --nav-bg:      #1E3A5F;
+    --border:      #CBD5E1;
+    --hover:       #2563EB;
+    --primary:     #2563EB;
+    --primary-light: rgba(37,99,235,0.08);
+    --danger:      #DC2626;
+    --success:     #16A34A;
+    --warning:     #D97706;
+    --info:        #0284C7;
+    --radius:      8px;
+    --radius-sm:   4px;
+    --radius-lg:   12px;
+    --shadow:      0 1px 3px rgba(0,0,0,0.10);
     --font-family: 'Open Sans', 'Helvetica Neue', sans-serif;
+
+    /* DS vars */
+    --ds-bg:           #EEF2F7;
+    --ds-bg-muted:     #DDE5EF;
+    --ds-card:         #FFFFFF;
+    --ds-card-border:  #CBD5E1;
+    --ds-fg:           #0F172A;
+    --ds-fg-muted:     #64748B;
+    --ds-fg-subtle:    #94A3B8;
+    --ds-primary:      #1E3A5F;
+    --ds-brand:        #2563EB;
+    --ds-brand-light:  rgba(37,99,235,0.08);
+    --ds-accent:       #D97706;
+    --ds-accent-light: rgba(217,119,6,0.10);
+    --ds-success:      #16A34A;
+    --ds-success-bg:   #F0FDF4;
+    --ds-warning:      #D97706;
+    --ds-warning-bg:   #FFFBEB;
+    --ds-danger:       #DC2626;
+    --ds-danger-bg:    #FEF2F2;
+    --ds-info:         #0284C7;
+    --ds-info-bg:      #F0F9FF;
+    --ds-radius-sm:    4px;
+    --ds-radius:       8px;
+    --ds-radius-lg:    12px;
+    --ds-radius-xl:    16px;
+    --ds-shadow-sm:    0 1px 2px rgba(0,0,0,0.06);
+    --ds-shadow:       0 2px 6px rgba(0,0,0,0.09);
+    --ds-shadow-md:    0 6px 14px rgba(0,0,0,0.10);
+    --ds-shadow-lg:    0 16px 24px rgba(0,0,0,0.12);
+    --ds-shadow-xl:    0 32px 48px rgba(0,0,0,0.15);
+    --ds-font-heading: 'Poppins', 'Segoe UI', sans-serif;
+    --ds-font-body:    'Open Sans', 'Helvetica Neue', sans-serif;
+    --ds-metric-stripe: linear-gradient(90deg, #2563EB 0%, #D97706 100%);
 }
 
-/* ---------- Minimal (light, soft) ---------- */
+/* ── 4. MINIMAL — Soft Light + Violet accent ────────────────── */
+/* Skill profile: Neumorphism-inspired, WCAG AA enforced         */
 [data-theme="minimal"] {
-    --bg: #fafafa;
-    --card-bg: #ffffff;
-    --text: #374151;
-    --text-muted: #9ca3af;
-    --header-bg: linear-gradient(135deg, #6b7280 0%, #4b5563 100%);
-    --nav-bg: #4b5563;
-    --border: #e5e7eb;
-    --hover: #4b5563;
-    --primary: #4b5563;
-    --danger: #ef4444;
-    --success: #10b981;
-    --warning: #f59e0b;
-    --info: #3b82f6;
-    --radius: 8px;
-    --shadow: 0 1px 2px rgba(0,0,0,0.05);
-    --font-family: 'Source Sans Pro', sans-serif;
+    color-scheme: light;
+
+    /* Legacy compat */
+    --bg:          #F1F5F9;
+    --card-bg:     #FFFFFF;
+    --text:        #334155;
+    --text-muted:  #64748B;
+    --header-bg:   linear-gradient(135deg, #475569 0%, #64748B 100%);
+    --nav-bg:      #334155;
+    --border:      #E2E8F0;
+    --hover:       #6C63FF;
+    --primary:     #6C63FF;
+    --primary-light: rgba(108,99,255,0.08);
+    --danger:      #EF4444;
+    --success:     #10B981;
+    --warning:     #F59E0B;
+    --info:        #3B82F6;
+    --radius:      10px;
+    --radius-sm:   6px;
+    --radius-lg:   14px;
+    --shadow:      0 1px 2px rgba(0,0,0,0.05), 4px 4px 12px rgba(163,177,198,0.35), -4px -4px 12px rgba(255,255,255,0.7);
+    --font-family: 'Open Sans', system-ui, sans-serif;
+
+    /* DS vars */
+    --ds-bg:           #F1F5F9;
+    --ds-bg-muted:     #E2E8F0;
+    --ds-card:         #FFFFFF;
+    --ds-card-border:  #E2E8F0;
+    --ds-fg:           #1E293B;
+    --ds-fg-muted:     #64748B;
+    --ds-fg-subtle:    #94A3B8;
+    --ds-primary:      #334155;
+    --ds-brand:        #6C63FF;
+    --ds-brand-light:  rgba(108,99,255,0.08);
+    --ds-accent:       #F59E0B;
+    --ds-accent-light: rgba(245,158,11,0.10);
+    --ds-success:      #10B981;
+    --ds-success-bg:   #ECFDF5;
+    --ds-warning:      #F59E0B;
+    --ds-warning-bg:   #FFFBEB;
+    --ds-danger:       #EF4444;
+    --ds-danger-bg:    #FEF2F2;
+    --ds-info:         #3B82F6;
+    --ds-info-bg:      #EFF6FF;
+    --ds-radius-sm:    6px;
+    --ds-radius:       10px;
+    --ds-radius-lg:    14px;
+    --ds-radius-xl:    18px;
+    /* Soft neumorphic elevation */
+    --ds-shadow-sm:    2px 2px 6px rgba(163,177,198,0.3), -2px -2px 6px rgba(255,255,255,0.7);
+    --ds-shadow:       4px 4px 12px rgba(163,177,198,0.35), -4px -4px 12px rgba(255,255,255,0.7);
+    --ds-shadow-md:    6px 6px 18px rgba(163,177,198,0.4), -6px -6px 18px rgba(255,255,255,0.75);
+    --ds-shadow-lg:    10px 10px 28px rgba(163,177,198,0.45), -10px -10px 28px rgba(255,255,255,0.8);
+    --ds-shadow-xl:    16px 16px 40px rgba(163,177,198,0.5), -16px -16px 40px rgba(255,255,255,0.85);
+    --ds-font-heading: 'Poppins', system-ui, sans-serif;
+    --ds-font-body:    'Open Sans', system-ui, sans-serif;
+    --ds-metric-stripe: linear-gradient(90deg, #6C63FF 0%, #F59E0B 100%);
 }
 
-/* ---------- Ocean (cool blues & teals) ---------- */
+/* ── 5. OCEAN — Teal + Cyan ─────────────────────────────────── */
+/* Skill profile: Accessible & Ethical · trust focus            */
 [data-theme="ocean"] {
-    --bg: #f0f9ff;
-    --card-bg: #ffffff;
-    --text: #0c4a6e;
-    --text-muted: #0369a1;
-    --header-bg: linear-gradient(135deg, #0e7490 0%, #0891b2 50%, #06b6d4 100%);
-    --nav-bg: #0e7490;
-    --border: #a5f3fc;
-    --hover: #0e7490;
-    --primary: #0891b2;
-    --danger: #be123c;
-    --success: #047857;
-    --warning: #b45309;
-    --info: #0284c7;
-    --radius: 10px;
-    --shadow: 0 4px 14px rgba(8, 145, 178, 0.15);
-    --font-family: 'Roboto', sans-serif;
+    color-scheme: light;
+
+    /* Legacy compat */
+    --bg:          #ECFEFF;
+    --card-bg:     #FFFFFF;
+    --text:        #083344;
+    --text-muted:  #0E7490;
+    --header-bg:   linear-gradient(135deg, #0C4A6E 0%, #0891B2 60%, #22D3EE 100%);
+    --nav-bg:      #0C4A6E;
+    --border:      #A5F3FC;
+    --hover:       #0891B2;
+    --primary:     #0891B2;
+    --primary-light: rgba(8,145,178,0.10);
+    --danger:      #BE123C;
+    --success:     #047857;
+    --warning:     #B45309;
+    --info:        #0284C7;
+    --radius:      12px;
+    --radius-sm:   6px;
+    --radius-lg:   16px;
+    --shadow:      0 4px 14px rgba(8,145,178,0.14);
+    --font-family: 'Open Sans', 'Roboto', sans-serif;
+
+    /* DS vars */
+    --ds-bg:           #ECFEFF;
+    --ds-bg-muted:     #CFFAFE;
+    --ds-card:         #FFFFFF;
+    --ds-card-border:  #A5F3FC;
+    --ds-fg:           #083344;
+    --ds-fg-muted:     #0E7490;
+    --ds-fg-subtle:    #22D3EE;
+    --ds-primary:      #0C4A6E;
+    --ds-brand:        #0891B2;
+    --ds-brand-light:  rgba(8,145,178,0.10);
+    --ds-accent:       #B45309;
+    --ds-accent-light: rgba(180,83,9,0.10);
+    --ds-success:      #047857;
+    --ds-success-bg:   #ECFDF5;
+    --ds-warning:      #B45309;
+    --ds-warning-bg:   #FFFBEB;
+    --ds-danger:       #BE123C;
+    --ds-danger-bg:    #FFF1F2;
+    --ds-info:         #0284C7;
+    --ds-info-bg:      #F0F9FF;
+    --ds-radius-sm:    6px;
+    --ds-radius:       12px;
+    --ds-radius-lg:    16px;
+    --ds-radius-xl:    20px;
+    --ds-shadow-sm:    0 2px 8px rgba(8,145,178,0.10);
+    --ds-shadow:       0 4px 14px rgba(8,145,178,0.14);
+    --ds-shadow-md:    0 8px 24px rgba(8,145,178,0.18);
+    --ds-shadow-lg:    0 16px 36px rgba(8,145,178,0.22);
+    --ds-shadow-xl:    0 32px 56px rgba(8,145,178,0.28);
+    --ds-font-heading: 'Poppins', system-ui, sans-serif;
+    --ds-font-body:    'Open Sans', 'Roboto', sans-serif;
+    --ds-metric-stripe: linear-gradient(90deg, #0891B2 0%, #22D3EE 100%);
 }
 
-/* ---------- Forest (greens, natural) ---------- */
+/* ── 6. FOREST — Emerald + Natural Green ───────────────────── */
+/* Skill profile: Trust & Authority · natural, calming          */
 [data-theme="forest"] {
-    --bg: #f0fdf4;
-    --card-bg: #ffffff;
-    --text: #14532d;
-    --text-muted: #166534;
-    --header-bg: linear-gradient(135deg, #15803d 0%, #16a34a 50%, #22c55e 100%);
-    --nav-bg: #166534;
-    --border: #bbf7d0;
-    --hover: #15803d;
-    --primary: #16a34a;
-    --danger: #b91c1c;
-    --success: #15803d;
-    --warning: #ca8a04;
-    --info: #0d9488;
-    --radius: 10px;
-    --shadow: 0 4px 14px rgba(22, 163, 74, 0.12);
-    --font-family: 'Roboto', sans-serif;
+    color-scheme: light;
+
+    /* Legacy compat */
+    --bg:          #F0FDF4;
+    --card-bg:     #FFFFFF;
+    --text:        #14532D;
+    --text-muted:  #166534;
+    --header-bg:   linear-gradient(135deg, #14532D 0%, #16A34A 60%, #4ADE80 100%);
+    --nav-bg:      #14532D;
+    --border:      #BBF7D0;
+    --hover:       #16A34A;
+    --primary:     #16A34A;
+    --primary-light: rgba(22,163,74,0.08);
+    --danger:      #B91C1C;
+    --success:     #15803D;
+    --warning:     #CA8A04;
+    --info:        #0D9488;
+    --radius:      12px;
+    --radius-sm:   6px;
+    --radius-lg:   16px;
+    --shadow:      0 4px 14px rgba(22,163,74,0.12);
+    --font-family: 'Open Sans', 'Roboto', sans-serif;
+
+    /* DS vars */
+    --ds-bg:           #F0FDF4;
+    --ds-bg-muted:     #DCFCE7;
+    --ds-card:         #FFFFFF;
+    --ds-card-border:  #BBF7D0;
+    --ds-fg:           #14532D;
+    --ds-fg-muted:     #166534;
+    --ds-fg-subtle:    #4ADE80;
+    --ds-primary:      #14532D;
+    --ds-brand:        #16A34A;
+    --ds-brand-light:  rgba(22,163,74,0.08);
+    --ds-accent:       #CA8A04;
+    --ds-accent-light: rgba(202,138,4,0.10);
+    --ds-success:      #15803D;
+    --ds-success-bg:   #DCFCE7;
+    --ds-warning:      #CA8A04;
+    --ds-warning-bg:   #FEFCE8;
+    --ds-danger:       #B91C1C;
+    --ds-danger-bg:    #FEF2F2;
+    --ds-info:         #0D9488;
+    --ds-info-bg:      #F0FDFA;
+    --ds-radius-sm:    6px;
+    --ds-radius:       12px;
+    --ds-radius-lg:    16px;
+    --ds-radius-xl:    20px;
+    --ds-shadow-sm:    0 2px 6px rgba(22,163,74,0.08);
+    --ds-shadow:       0 4px 14px rgba(22,163,74,0.12);
+    --ds-shadow-md:    0 8px 22px rgba(22,163,74,0.15);
+    --ds-shadow-lg:    0 16px 32px rgba(22,163,74,0.18);
+    --ds-shadow-xl:    0 32px 48px rgba(22,163,74,0.22);
+    --ds-font-heading: 'Poppins', system-ui, sans-serif;
+    --ds-font-body:    'Open Sans', 'Roboto', sans-serif;
+    --ds-metric-stripe: linear-gradient(90deg, #16A34A 0%, #CA8A04 100%);
 }
 
-/* ---------- Sunset (warm amber/coral) ---------- */
+/* ── 7. SUNSET — Warm Amber + Coral ────────────────────────── */
+/* Skill profile: Vibrant & Block-based · energetic, warm       */
 [data-theme="sunset"] {
-    --bg: #fffbeb;
-    --card-bg: #ffffff;
-    --text: #78350f;
-    --text-muted: #b45309;
-    --header-bg: linear-gradient(135deg, #ea580c 0%, #f97316 50%, #fb923c 100%);
-    --nav-bg: #c2410c;
-    --border: #fed7aa;
-    --hover: #c2410c;
-    --primary: #ea580c;
-    --danger: #dc2626;
-    --success: #16a34a;
-    --warning: #d97706;
-    --info: #0284c7;
-    --radius: 10px;
-    --shadow: 0 4px 14px rgba(234, 88, 12, 0.15);
-    --font-family: 'Roboto', sans-serif;
+    color-scheme: light;
+
+    /* Legacy compat */
+    --bg:          #FFFBEB;
+    --card-bg:     #FFFFFF;
+    --text:        #78350F;
+    --text-muted:  #92400E;
+    --header-bg:   linear-gradient(135deg, #9A3412 0%, #EA580C 50%, #FB923C 100%);
+    --nav-bg:      #9A3412;
+    --border:      #FED7AA;
+    --hover:       #EA580C;
+    --primary:     #EA580C;
+    --primary-light: rgba(234,88,12,0.08);
+    --danger:      #DC2626;
+    --success:     #16A34A;
+    --warning:     #D97706;
+    --info:        #0284C7;
+    --radius:      12px;
+    --radius-sm:   6px;
+    --radius-lg:   16px;
+    --shadow:      0 4px 14px rgba(234,88,12,0.15);
+    --font-family: 'Poppins', 'Open Sans', sans-serif;
+
+    /* DS vars */
+    --ds-bg:           #FFFBEB;
+    --ds-bg-muted:     #FEF3C7;
+    --ds-card:         #FFFFFF;
+    --ds-card-border:  #FED7AA;
+    --ds-fg:           #7C2D12;
+    --ds-fg-muted:     #92400E;
+    --ds-fg-subtle:    #B45309;
+    --ds-primary:      #9A3412;
+    --ds-brand:        #EA580C;
+    --ds-brand-light:  rgba(234,88,12,0.08);
+    --ds-accent:       #D97706;
+    --ds-accent-light: rgba(217,119,6,0.10);
+    --ds-success:      #16A34A;
+    --ds-success-bg:   #F0FDF4;
+    --ds-warning:      #D97706;
+    --ds-warning-bg:   #FFFBEB;
+    --ds-danger:       #DC2626;
+    --ds-danger-bg:    #FEF2F2;
+    --ds-info:         #0284C7;
+    --ds-info-bg:      #F0F9FF;
+    --ds-radius-sm:    6px;
+    --ds-radius:       12px;
+    --ds-radius-lg:    16px;
+    --ds-radius-xl:    20px;
+    --ds-shadow-sm:    0 2px 6px rgba(234,88,12,0.10);
+    --ds-shadow:       0 4px 14px rgba(234,88,12,0.15);
+    --ds-shadow-md:    0 8px 22px rgba(234,88,12,0.18);
+    --ds-shadow-lg:    0 16px 32px rgba(234,88,12,0.22);
+    --ds-shadow-xl:    0 32px 48px rgba(234,88,12,0.28);
+    --ds-font-heading: 'Poppins', system-ui, sans-serif;
+    --ds-font-body:    'Open Sans', system-ui, sans-serif;
+    --ds-metric-stripe: linear-gradient(90deg, #EA580C 0%, #FBBF24 100%);
 }
 
-/* ---------- Dark (dark mode) ---------- */
+/* ── 8. DARK — OLED-safe · Sky Blue accent ──────────────────── */
+/* Skill profile: Dark Mode (OLED) — no pure #000000, 7:1+ text  */
 [data-theme="dark"] {
-    --bg: #1e293b;
-    --card-bg: #334155;
-    --text: #f1f5f9;
-    --text-muted: #94a3b8;
-    --header-bg: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
-    --nav-bg: #0f172a;
-    --border: #475569;
-    --hover: #38bdf8;
-    --primary: #38bdf8;
-    --danger: #f87171;
-    --success: #4ade80;
-    --warning: #fbbf24;
-    --info: #38bdf8;
-    --radius: 8px;
-    --shadow: 0 4px 6px rgba(0,0,0,0.3);
-    --font-family: 'Roboto', sans-serif;
+    color-scheme: dark;
+
+    /* Legacy compat */
+    --bg:          #0F172A;
+    --card-bg:     #1E293B;
+    --text:        #F1F5F9;
+    --text-muted:  #94A3B8;
+    --header-bg:   linear-gradient(135deg, #020617 0%, #0F172A 100%);
+    --nav-bg:      #020617;
+    --border:      rgba(255,255,255,0.07);
+    --hover:       #38BDF8;
+    --primary:     #38BDF8;
+    --primary-light: rgba(56,189,248,0.12);
+    --danger:      #F87171;
+    --success:     #4ADE80;
+    --warning:     #FBBF24;
+    --info:        #38BDF8;
+    --radius:      12px;
+    --radius-sm:   6px;
+    --radius-lg:   16px;
+    --shadow:      0 4px 16px rgba(0,0,0,0.4);
+    --font-family: 'Open Sans', 'Roboto', sans-serif;
+
+    /* DS vars */
+    --ds-bg:           #0F172A;
+    --ds-bg-muted:     #162032;
+    --ds-card:         #1E293B;
+    --ds-card-border:  rgba(255,255,255,0.07);
+    --ds-fg:           #F1F5F9;
+    --ds-fg-muted:     #94A3B8;
+    --ds-fg-subtle:    #64748B;
+    --ds-primary:      #020617;
+    --ds-brand:        #38BDF8;
+    --ds-brand-light:  rgba(56,189,248,0.12);
+    --ds-accent:       #FBBF24;
+    --ds-accent-light: rgba(251,191,36,0.12);
+    --ds-success:      #4ADE80;
+    --ds-success-bg:   rgba(74,222,128,0.12);
+    --ds-warning:      #FBBF24;
+    --ds-warning-bg:   rgba(251,191,36,0.12);
+    --ds-danger:       #F87171;
+    --ds-danger-bg:    rgba(248,113,113,0.12);
+    --ds-info:         #38BDF8;
+    --ds-info-bg:      rgba(56,189,248,0.12);
+    --ds-radius-sm:    6px;
+    --ds-radius:       12px;
+    --ds-radius-lg:    16px;
+    --ds-radius-xl:    20px;
+    --ds-shadow-sm:    0 2px 8px rgba(0,0,0,0.35);
+    --ds-shadow:       0 4px 16px rgba(0,0,0,0.4);
+    --ds-shadow-md:    0 8px 24px rgba(0,0,0,0.5);
+    --ds-shadow-lg:    0 20px 40px rgba(0,0,0,0.6);
+    --ds-shadow-xl:    0 40px 60px rgba(0,0,0,0.7);
+    --ds-font-heading: 'Poppins', system-ui, sans-serif;
+    --ds-font-body:    'Open Sans', 'Roboto', sans-serif;
+    --ds-metric-stripe: linear-gradient(90deg, #38BDF8 0%, #FBBF24 100%);
 }
 
-/* Apply theme variables to key elements (override styles.css) */
+/* ============================================================
+   THEME APPLICATION RULES
+   Applies DS and legacy vars to the actual DOM elements.
+   design-system.css handles typography + component details;
+   these rules handle structural layout overrides per theme.
+   ============================================================ */
+
+/* Body & background */
 [data-theme] body {
-    background-color: var(--bg);
-    color: var(--text);
-    font-family: var(--font-family);
+    background-color: var(--ds-bg, var(--bg));
+    color: var(--ds-fg, var(--text));
+    font-family: var(--ds-font-body, var(--font-family));
 }
 
+/* Headings use display font */
+[data-theme] h1,
+[data-theme] h2,
+[data-theme] h3,
+[data-theme] h4 {
+    font-family: var(--ds-font-heading, var(--font-family));
+}
+
+/* Header */
 [data-theme] header {
     background: var(--header-bg);
 }
 
+[data-theme] header::after {
+    background: var(--ds-metric-stripe, linear-gradient(90deg, var(--ds-brand), var(--ds-accent)));
+}
+
+/* Nav */
 [data-theme] nav,
 [data-theme] .mobile-sidebar nav {
-    background-color: var(--nav-bg) !important;
+    background-color: var(--ds-primary, var(--nav-bg)) !important;
 }
 
+[data-theme] nav ul li {
+    color: rgba(255,255,255,0.6);
+    border-radius: var(--ds-radius-sm, var(--radius-sm));
+}
+
+[data-theme] nav ul li:hover {
+    background: rgba(255,255,255,0.08);
+    color: #FFFFFF;
+}
+
+[data-theme] nav ul li.active {
+    background: var(--ds-brand, var(--primary));
+    color: #FFFFFF;
+}
+
+/* Cards */
 [data-theme] .card,
-[data-theme] .metric,
 [data-theme] .widget {
-    background: var(--card-bg);
-    box-shadow: var(--shadow);
-    border-radius: var(--radius);
-    border: 1px solid var(--border);
+    background: var(--ds-card, var(--card-bg));
+    box-shadow: var(--ds-shadow, var(--shadow));
+    border-radius: var(--ds-radius, var(--radius));
+    border: 1px solid var(--ds-card-border, var(--border));
 }
 
-[data-theme] .btn:not([style*="background"]),
-[data-theme] button:not([style*="background"]):not(.close-btn):not(.hamburger-btn) {
-    background-color: var(--primary);
+/* Metric cards */
+[data-theme] .metric {
+    background: var(--ds-card, var(--card-bg));
+    box-shadow: var(--ds-shadow-sm, var(--shadow));
+    border-radius: var(--ds-radius-lg, var(--radius-lg));
+    border: 1px solid var(--ds-card-border, var(--border));
 }
 
-[data-theme] .btn:hover,
-[data-theme] button:hover:not(.close-btn):not(.hamburger-btn) {
-    filter: brightness(1.1);
+[data-theme] .metric::before {
+    background: var(--ds-metric-stripe);
 }
 
-[data-theme] .spinner {
-    border-top-color: var(--primary);
-}
-
-[data-theme] .toast.success { border-left-color: var(--success); }
-[data-theme] .toast.error { border-left-color: var(--danger); }
-[data-theme] .toast.warning { border-left-color: var(--warning); }
-[data-theme] .toast.info { border-left-color: var(--info); }
-
-[data-theme] table th {
-    background-color: var(--bg);
-    color: var(--text);
-    border-color: var(--border);
-}
-
-[data-theme] .metric h3,
-[data-theme] .card h3 {
-    color: var(--text);
+[data-theme] .metric h3 {
+    color: var(--ds-fg-muted, var(--text-muted));
 }
 
 [data-theme] .metric p {
-    color: var(--primary);
+    color: var(--ds-brand, var(--primary));
+    font-family: var(--ds-font-mono);
 }
 
+/* Table */
+[data-theme] table th {
+    background: var(--ds-bg-muted, var(--bg));
+    color: var(--ds-fg-muted, var(--text-muted));
+    border-color: var(--ds-card-border, var(--border));
+}
+
+[data-theme] table td {
+    border-color: var(--ds-card-border, var(--border));
+    color: var(--ds-fg, var(--text));
+}
+
+[data-theme] tr:hover {
+    background: var(--ds-brand-light, rgba(0,0,0,0.03));
+}
+
+/* Buttons */
+[data-theme] button:not([style*="background"]):not(.close-btn):not(.hamburger-btn):not(.close) {
+    background: var(--ds-brand, var(--primary));
+    border-radius: var(--ds-radius-sm, var(--radius-sm));
+    font-family: var(--ds-font-body, var(--font-family));
+    transition: background var(--ds-duration-fast, 0.15s) var(--ds-ease, ease),
+                box-shadow var(--ds-duration-fast, 0.15s) var(--ds-ease, ease),
+                transform var(--ds-duration-fast, 0.15s) var(--ds-ease, ease);
+}
+
+[data-theme] button:hover:not(:disabled):not(.close-btn):not(.hamburger-btn):not(.close) {
+    filter: brightness(1.08);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+    transform: translateY(-1px);
+}
+
+[data-theme] button:active:not(:disabled) {
+    filter: none;
+    transform: scale(0.98) translateY(0);
+    box-shadow: none;
+}
+
+[data-theme] button.danger,
+[data-theme] .danger {
+    background: var(--ds-danger, var(--danger)) !important;
+}
+
+/* Inputs */
 [data-theme] input,
 [data-theme] select,
 [data-theme] textarea {
-    border-color: var(--border);
-    background: var(--card-bg);
-    color: var(--text);
+    border-color: var(--ds-card-border, var(--border));
+    background: var(--ds-card, var(--card-bg));
+    color: var(--ds-fg, var(--text));
+    border-radius: var(--ds-radius-sm, var(--radius-sm));
 }
 
-[data-theme] .danger {
-    background-color: var(--danger) !important;
+[data-theme] input:focus,
+[data-theme] select:focus,
+[data-theme] textarea:focus {
+    border-color: var(--ds-brand, var(--primary));
+    box-shadow: 0 0 0 3px var(--ds-brand-light, rgba(0,0,0,0.08));
+}
+
+/* Modal */
+[data-theme] .modal-content {
+    background: var(--ds-card, var(--card-bg));
+    border-radius: var(--ds-radius-xl, var(--radius-lg));
+    box-shadow: var(--ds-shadow-xl, var(--shadow));
+    border: 1px solid var(--ds-card-border, var(--border));
+}
+
+/* Spinner */
+[data-theme] .spinner {
+    border-color: var(--ds-bg-muted, #e0e0e0);
+    border-top-color: var(--ds-brand, var(--primary));
+}
+
+/* Toasts */
+[data-theme] .toast.success { border-left-color: var(--ds-success, var(--success)); }
+[data-theme] .toast.error   { border-left-color: var(--ds-danger,  var(--danger));  }
+[data-theme] .toast.warning { border-left-color: var(--ds-warning, var(--warning)); }
+[data-theme] .toast.info    { border-left-color: var(--ds-info,    var(--info));    }
+
+/* ── DARK THEME OVERRIDES ──────────────────────────────────── */
+/* Extra rules needed because text/bg defaults from styles.css
+   are light-mode assumptions */
+
+[data-theme="dark"] .modal {
+    background: rgba(2,6,23,0.75);
+}
+
+[data-theme="dark"] .modal-content {
+    background: var(--ds-card);
+    border: 1px solid var(--ds-card-border);
+}
+
+[data-theme="dark"] table th {
+    background: var(--ds-bg-muted);
+    color: var(--ds-fg-muted);
+}
+
+[data-theme="dark"] tr:nth-child(even) {
+    background: rgba(255,255,255,0.025);
+}
+
+[data-theme="dark"] tr:hover {
+    background: rgba(56,189,248,0.06);
+}
+
+[data-theme="dark"] input,
+[data-theme="dark"] select,
+[data-theme="dark"] textarea {
+    background: var(--ds-bg-muted);
+    color: var(--ds-fg);
+    border-color: var(--ds-card-border);
+}
+
+[data-theme="dark"] .sales-group-header {
+    background: var(--ds-bg-muted);
+    color: var(--ds-fg-muted);
+}
+
+[data-theme="dark"] .bulk-product-row {
+    background: var(--ds-bg-muted);
+}
+
+[data-theme="dark"] .global-search-results {
+    background: var(--ds-card);
+    color: var(--ds-fg);
+    border: 1px solid var(--ds-card-border);
+}
+
+/* ── MODERN THEME OVERRIDES ────────────────────────────────── */
+[data-theme="modern"] .modal {
+    background: rgba(5,5,6,0.8);
+}
+
+[data-theme="modern"] input,
+[data-theme="modern"] select,
+[data-theme="modern"] textarea {
+    background: var(--ds-bg-muted);
+    color: var(--ds-fg);
+    border-color: var(--ds-card-border);
+}
+
+[data-theme="modern"] tr:nth-child(even) {
+    background: rgba(255,255,255,0.02);
+}
+
+[data-theme="modern"] tr:hover {
+    background: rgba(94,106,210,0.08);
+}
+
+[data-theme="modern"] .global-search-results {
+    background: var(--ds-card);
+    color: var(--ds-fg);
+    border: 1px solid var(--ds-card-border);
+}
+
+/* ── MINIMAL THEME OVERRIDES ───────────────────────────────── */
+/* Neumorphic buttons get extruded shadows instead of flat bg   */
+[data-theme="minimal"] button:not([style*="background"]):not(.close-btn):not(.hamburger-btn):not(.close) {
+    box-shadow: 4px 4px 8px rgba(163,177,198,0.4), -4px -4px 8px rgba(255,255,255,0.8);
+    border: none;
+}
+
+[data-theme="minimal"] button:active:not(:disabled) {
+    box-shadow: inset 2px 2px 5px rgba(163,177,198,0.5), inset -2px -2px 5px rgba(255,255,255,0.8);
+    transform: none;
+    filter: none;
+}
+
+[data-theme="minimal"] input:focus,
+[data-theme="minimal"] select:focus,
+[data-theme="minimal"] textarea:focus {
+    box-shadow: inset 2px 2px 5px rgba(163,177,198,0.4), inset -2px -2px 5px rgba(255,255,255,0.7),
+                0 0 0 2px var(--ds-brand-light);
 }

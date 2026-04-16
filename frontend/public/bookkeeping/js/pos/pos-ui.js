@@ -28,26 +28,30 @@ export const POSUI = {
     // Toggle dark mode
     toggleDarkMode() {
         const target = this._getThemeTarget();
-        target.classList.toggle('dark-mode');
-        const isDark = target.classList.contains('dark-mode');
-        localStorage.setItem('dark-mode', isDark);
-        
+        // Standalone pos.html uses .pos-dark on body; embedded uses .dark-mode on #pos-embedded-root
+        const isEmbedded = !!document.getElementById('pos-embedded-root');
+        const cls = isEmbedded ? 'dark-mode' : 'pos-dark';
+        target.classList.toggle(cls);
+        const isDark = target.classList.contains(cls);
+        localStorage.setItem('pos-dark-mode', isDark);
+
         const btn = document.getElementById('dark-mode-toggle');
         if (btn) {
-            btn.innerHTML = isDark ? 
-                '<i class="fas fa-sun"></i> Light Mode' : 
-                '<i class="fas fa-moon"></i> Dark Mode';
+            btn.innerHTML = isDark
+                ? '<i class="fas fa-sun"></i> <span>Light</span>'
+                : '<i class="fas fa-moon"></i> <span>Dark</span>';
         }
     },
 
     // Load dark mode preference
     loadDarkModePreference() {
-        const isDark = localStorage.getItem('dark-mode') === 'true';
+        const isDark = localStorage.getItem('pos-dark-mode') === 'true';
         if (isDark) {
             const target = this._getThemeTarget();
-            target.classList.add('dark-mode');
+            const isEmbedded = !!document.getElementById('pos-embedded-root');
+            target.classList.add(isEmbedded ? 'dark-mode' : 'pos-dark');
             const btn = document.getElementById('dark-mode-toggle');
-            if (btn) btn.innerHTML = '<i class="fas fa-sun"></i> Light Mode';
+            if (btn) btn.innerHTML = '<i class="fas fa-sun"></i> <span>Light</span>';
         }
     }
 };

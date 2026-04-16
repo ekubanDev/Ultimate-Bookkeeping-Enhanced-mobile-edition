@@ -55,8 +55,11 @@ async function computeOutletInventoryValue(db, ownerUid, outletId) {
     const seenProductKeys = new Set();
     let total = 0;
 
-    const oiRef = collection(db, 'users', ownerUid, 'outlets', outletId, 'outlet_inventory');
-    const snapOI = await getDocs(oiRef);
+    // Fetch both collections in parallel — they are independent reads
+    const oiRef  = collection(db, 'users', ownerUid, 'outlets', outletId, 'outlet_inventory');
+    const legRef = collection(db, 'users', ownerUid, 'outlets', outletId, 'inventory');
+    const [snapOI, snapLeg] = await Promise.all([getDocs(oiRef), getDocs(legRef)]);
+
     snapOI.forEach((docSnap) => {
         const item = docSnap.data();
         const key = String(item.productId ?? docSnap.id);
@@ -64,8 +67,6 @@ async function computeOutletInventoryValue(db, ownerUid, outletId) {
         total += lineValue(item);
     });
 
-    const legRef = collection(db, 'users', ownerUid, 'outlets', outletId, 'inventory');
-    const snapLeg = await getDocs(legRef);
     snapLeg.forEach((docSnap) => {
         const item = docSnap.data();
         const key = String(item.productId ?? docSnap.id);
@@ -162,15 +163,18 @@ class DataLoaderService {
 
                         let outletRows = [];
                         if (outletIdsToLoad.length > 0) {
-                            for (const outletId of outletIdsToLoad) {
-                                const outletSalesRef = collection(db, 'users', uid, 'outlets', outletId, 'outlet_sales');
-                                const rows = await fetchCollectionRows(outletSalesRef, `outlet_sales:${outletId}`);
-                                outletRows = outletRows.concat(rows.map(r => ({
-                                    ...r,
-                                    outletId: r.outletId || outletId,
-                                    location: r.location || outletId
-                                })));
-                            }
+                            // Fetch all outlet sales collections in parallel
+                            const outletSalesFetches = outletIdsToLoad.map(outletId => {
+                                const ref = collection(db, 'users', uid, 'outlets', outletId, 'outlet_sales');
+                                return fetchCollectionRows(ref, `outlet_sales:${outletId}`)
+                                    .then(rows => rows.map(r => ({
+                                        ...r,
+                                        outletId: r.outletId || outletId,
+                                        location: r.location || outletId
+                                    })));
+                            });
+                            const results = await Promise.all(outletSalesFetches);
+                            outletRows = results.flat();
                         }
 
                         state.allSales = mainRows.concat(outletRows);
@@ -209,32 +213,31 @@ class DataLoaderService {
                                 state.allExpenses.push({ ...doc.data(), id: doc.id });
                             });
                         } else if (selectedFilter === 'all') {
-                            // Load all expenses (main + all outlets)
-                            // Load main expenses
-                            const mainSnapshot = await getDocs(
-                                query(firebaseService.getUserCollection('expenses'), orderBy('date', 'desc'))
+                            // Load all expenses (main + all outlets) in parallel
+                            const mainQuery = query(firebaseService.getUserCollection('expenses'), orderBy('date', 'desc'));
+                            const outletQueries = state.allOutlets.map(outlet =>
+                                getDocs(query(
+                                    firebaseService.getOutletSubCollection(outlet.id, 'outlet_expenses'),
+                                    orderBy('date', 'desc')
+                                )).then(snap => ({ snap, outletId: outlet.id })).catch(() => null)
                             );
+
+                            const [mainSnapshot, ...outletResults] = await Promise.all([
+                                getDocs(mainQuery),
+                                ...outletQueries
+                            ]);
+
                             mainSnapshot.forEach(doc => {
                                 state.allExpenses.push({ ...doc.data(), id: doc.id, source: 'main' });
                             });
-                            
-                            // Load all outlet expenses
-                            for (const outlet of state.allOutlets) {
-                                try {
-                                    const outletSnapshot = await getDocs(
-                                        query(
-                                            firebaseService.getOutletSubCollection(outlet.id, 'outlet_expenses'),
-                                            orderBy('date', 'desc')
-                                        )
-                                    );
-                                    outletSnapshot.forEach(doc => {
-                                        state.allExpenses.push({ ...doc.data(), id: doc.id, source: outlet.id });
-                                    });
-                                } catch (err) {
-                                    // outlet may have no expenses subcollection yet — skip silently
-                                }
+
+                            for (const result of outletResults) {
+                                if (!result) continue; // outlet had no expenses subcollection
+                                result.snap.forEach(doc => {
+                                    state.allExpenses.push({ ...doc.data(), id: doc.id, source: result.outletId });
+                                });
                             }
-                            
+
                             // Sort by date
                             state.allExpenses.sort((a, b) => b.date.localeCompare(a.date));
                         } else {
