@@ -207,7 +207,7 @@ body.dark-mode .dialog-btn.cancel-btn:hover {
     left: 0;
     right: 0;
     bottom: 0;
-    z-index: 9999;
+    z-index: 100050;
     opacity: 0;
     transition: opacity 0.3s ease;
 }
@@ -231,12 +231,18 @@ body.dark-mode .dialog-btn.cancel-btn:hover {
     top: 0;
     right: 0;
     bottom: 0;
+    left: 0;
     width: 100%;
     max-width: 900px;
+    margin-left: auto;
     background: white;
     box-shadow: -2px 0 20px rgba(0, 0, 0, 0.3);
     display: flex;
     flex-direction: column;
+    height: 100%;
+    max-height: 100vh;
+    max-height: 100dvh;
+    min-height: 0;
     transform: translateX(100%);
     transition: transform 0.3s ease;
 }
@@ -310,8 +316,12 @@ body.dark-mode .dialog-btn.cancel-btn:hover {
 /* Report Modal Body */
 .report-modal-body {
     flex: 1;
+    min-height: 0;
     overflow-y: auto;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
     padding: 24px;
+    padding-bottom: calc(24px + env(safe-area-inset-bottom, 0));
     background: white;
 }
 

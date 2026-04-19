@@ -169,6 +169,66 @@ class BookkeepingAPITester:
                 
         return success, response
 
+    def test_metrics_ingest(self):
+        """Test metrics ingestion endpoint"""
+        sample_data = {
+            "event_name": "flow_completed",
+            "event_version": 1,
+            "correlation_id": f"corr_{datetime.now().strftime('%H%M%S')}",
+            "timestamp_client": datetime.utcnow().isoformat() + "Z",
+            "actor": {
+                "user_id": "test_user",
+                "user_role": "admin",
+                "assigned_outlet": None
+            },
+            "context": {
+                "section": "settlements",
+                "platform": "web"
+            },
+            "payload": {
+                "flow_name": "generate_settlement",
+                "duration_ms": 1250,
+                "result": "success"
+            }
+        }
+
+        success, response = self.run_test(
+            "Metrics Event Ingest",
+            "POST",
+            "api/metrics/events",
+            200,
+            sample_data
+        )
+
+        if success and response:
+            required_fields = ['status', 'event_id', 'correlation_id', 'timestamp_server']
+            missing_fields = [field for field in required_fields if field not in response]
+            if missing_fields:
+                print(f"⚠️  Warning: Missing fields in metrics response: {missing_fields}")
+            else:
+                print("✅ Metrics ingest response structure is valid")
+
+        return success, response
+
+    def test_metrics_health(self):
+        """Test metrics health endpoint"""
+        success, response = self.run_test(
+            "Metrics Events Health",
+            "GET",
+            "api/metrics/events/health",
+            200
+        )
+
+        if success and response:
+            required_fields = ['status', 'storage', 'counts', 'timestamp_server']
+            missing_fields = [field for field in required_fields if field not in response]
+            if missing_fields:
+                print(f"⚠️  Warning: Missing fields in metrics health response: {missing_fields}")
+            else:
+                print("✅ Metrics health response structure is valid")
+
+        return success, response
+
     def test_status_endpoints(self):
         """Test status creation and retrieval"""
         # Test creating status
@@ -216,6 +276,11 @@ class BookkeepingAPITester:
         self.test_ai_insights()
         self.test_ai_forecast()
         self.test_ai_chat()
+
+        # Product metrics endpoint
+        print("\n📈 Testing Metrics Ingestion...")
+        self.test_metrics_ingest()
+        self.test_metrics_health()
         
         # Print summary
         print("\n" + "=" * 60)

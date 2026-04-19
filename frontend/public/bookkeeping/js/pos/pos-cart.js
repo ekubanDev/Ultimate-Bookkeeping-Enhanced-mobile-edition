@@ -3,6 +3,7 @@ import { state } from '../utils/state.js';
 import { POSUI } from './pos-ui.js';
 import { POSCheckout } from './pos-checkout.js';
 import { POSData } from './pos-data.js';
+import { metricsService } from '../services/metrics-service.js';
 
 export const POSCart = {
     cart: [],
@@ -15,8 +16,12 @@ export const POSCart = {
 
     setupEventListeners() {
         // Clear cart
-        document.getElementById('clear-cart')?.addEventListener('click', () => {
-            if (confirm('Clear cart?')) {
+        document.getElementById('clear-cart')?.addEventListener('click', async () => {
+            const UX = window.UX;
+            const confirmed = UX
+                ? await UX.confirm({ title: 'Clear Cart', body: 'Remove all items from the cart?', confirmLabel: 'Clear', variant: 'danger' })
+                : confirm('Clear cart?');
+            if (confirmed) {
                 this.cart = [];
                 this.saveCart();
                 this.renderCart();
@@ -81,61 +86,122 @@ export const POSCart = {
         }
     },
 
+    increaseQty(index) {
+        const item = this.cart[index];
+        if (!item) return;
+        const product = (window.POSProducts?.allProducts || []).find(p => p.id === item.id);
+        const maxQty = product ? product.quantity : 9999;
+        if (item.qty < maxQty) {
+            item.qty++;
+            this.saveCart();
+            this.renderCart();
+        } else {
+            POSUI.showNotification('Max stock reached', 'error');
+        }
+    },
+
     renderCart() {
         const container = document.getElementById('cart');
-        const totalEl = document.querySelector('.total');
-        
+        const checkoutBtn = document.getElementById('checkout');
+
         if (!container) return;
 
         if (this.cart.length === 0) {
-            container.innerHTML = '<p>Your cart is empty.</p>';
-            totalEl.textContent = 'Total: ₵0.00';
+            container.innerHTML = `
+                <div class="pos-cart-empty">
+                    <i class="fas fa-shopping-basket"></i>
+                    <p>Cart is empty</p>
+                    <small>Tap a product to add it</small>
+                </div>`;
+            this._updateTotals(0, 0);
+            if (checkoutBtn) checkoutBtn.disabled = true;
             return;
         }
 
-        let total = 0;
+        if (checkoutBtn) checkoutBtn.disabled = false;
+
+        let subtotal = 0;
+        let totalDiscount = 0;
+
         container.innerHTML = this.cart.map((item, index) => {
-            const subtotal = item.price * item.qty - item.discount;
-            total += subtotal;
+            const lineSubtotal = item.price * item.qty;
+            const lineDiscount = Number(item.discount) || 0;
+            const lineTotal = lineSubtotal - lineDiscount;
+            subtotal += lineSubtotal;
+            totalDiscount += lineDiscount;
             return `
-                <div class="cart-item">
-                    <div>
-                        <strong>${item.name}</strong><br>
-                        <small>${POSUI.formatCurrency(item.price)} × ${item.qty} = ${POSUI.formatCurrency(item.price * item.qty)}</small>
-                        ${item.discount > 0 ? `<br><small style="color: green;">-${POSUI.formatCurrency(item.discount)} discount</small>` : ''}
+                <div class="cart-row">
+                    <div class="cart-row__info">
+                        <span class="cart-row__name">${item.name}</span>
+                        <span class="cart-row__unit">${POSUI.formatCurrency(item.price)} ea${lineDiscount > 0 ? ` · <span class="cart-row__discount">−${POSUI.formatCurrency(lineDiscount)}</span>` : ''}</span>
                     </div>
-                    <div class="cart-controls">
-                        <button onclick="POSCart.decreaseQty(${index})" style="background: #e74c3c; color: white;">−</button>
-                        <button onclick="POSCart.removeFromCart(${index})" style="background: #95a5a6; color: white;">🗑️</button>
+                    <div class="cart-qty-stepper">
+                        <button class="qty-btn minus" onclick="POSCart.decreaseQty(${index})">−</button>
+                        <span class="qty-value">${item.qty}</span>
+                        <button class="qty-btn plus" onclick="POSCart.increaseQty(${index})">+</button>
                     </div>
+                    <span class="cart-row__total">${POSUI.formatCurrency(lineTotal)}</span>
+                    <button class="cart-row__remove" onclick="POSCart.removeFromCart(${index})" title="Remove">
+                        <i class="fas fa-times"></i>
+                    </button>
                 </div>
             `;
         }).join('');
 
-        totalEl.textContent = `Total: ${POSUI.formatCurrency(total)}`;
+        this._updateTotals(subtotal, totalDiscount);
+    },
+
+    _updateTotals(subtotal, totalDiscount) {
+        const grandTotal = subtotal - totalDiscount;
+
+        // Modern summary lines
+        const subEl  = document.getElementById('summary-subtotal');
+        const discEl = document.getElementById('summary-discount');
+        const totEl  = document.getElementById('summary-total');
+        if (subEl)  subEl.textContent  = POSUI.formatCurrency(subtotal);
+        if (discEl) discEl.textContent = totalDiscount > 0 ? `−${POSUI.formatCurrency(totalDiscount)}` : '—';
+        if (totEl)  totEl.textContent  = POSUI.formatCurrency(grandTotal);
+
+        // Legacy .total fallback (pos.html old layout / embedded)
+        const legacyEl = document.querySelector('.total');
+        if (legacyEl) legacyEl.textContent = `Total: ${POSUI.formatCurrency(grandTotal)}`;
     },
 
     showCheckoutModal() {
         const modal = document.getElementById('checkout-modal');
-        const customerName = document.getElementById('customer-name');
-        const invoicePreview = document.getElementById('invoice-preview');
+        if (!modal) return;
+        const customerName = modal.querySelector('#customer-name');
+        const invoicePreview = modal.querySelector('#invoice-preview');
 
-        // Generate invoice preview
-        invoicePreview.textContent = this.generateInvoice();
+        // Generate invoice preview (defensive so preview never remains stuck at "Loading...")
+        try {
+            if (invoicePreview) invoicePreview.textContent = this.generateInvoice();
+        } catch (e) {
+            console.error('Invoice preview generation failed:', e);
+            if (invoicePreview) {
+                invoicePreview.textContent = 'Unable to render invoice preview. Please continue checkout.';
+            }
+        }
 
         modal.classList.add('active');
-        customerName.value = '';
-        customerName.focus();
+        if (customerName) {
+            customerName.value = '';
+            customerName.focus();
+        }
 
         // Cancel button
-        document.getElementById('cancel-checkout').onclick = () => {
+        const cancelBtn = modal.querySelector('#cancel-checkout');
+        if (cancelBtn) cancelBtn.onclick = () => {
             modal.classList.remove('active');
         };
 
         // Confirm button
-        document.getElementById('confirm-sale').onclick = async () => {
-            await this.confirmSale(customerName.value || 'Walk-in Customer');
-        };
+        const confirmBtn = modal.querySelector('#confirm-sale');
+        if (confirmBtn) {
+            confirmBtn.onclick = async () => {
+                await this.confirmSale((customerName?.value || 'Walk-in Customer'));
+            };
+        }
     },
 
     generateInvoice() {
@@ -145,12 +211,15 @@ export const POSCart = {
         
         let total = 0;
         this.cart.forEach(item => {
-            const subtotal = item.price * item.qty - item.discount;
+            const price = Number(item.price) || 0;
+            const qty = Number(item.qty) || 0;
+            const discount = Number(item.discount) || 0;
+            const subtotal = price * qty - discount;
             total += subtotal;
             lines.push(`${item.name}`);
-            lines.push(`  ${item.qty} × ₵${item.price.toFixed(2)} = ₵${(item.price * item.qty).toFixed(2)}`);
-            if (item.discount > 0) {
-                lines.push(`  Discount: -₵${item.discount.toFixed(2)}`);
+            lines.push(`  ${qty} × ₵${price.toFixed(2)} = ₵${(price * qty).toFixed(2)}`);
+            if (discount > 0) {
+                lines.push(`  Discount: -₵${discount.toFixed(2)}`);
             }
             lines.push('');
         });
@@ -163,20 +232,33 @@ export const POSCart = {
     },
 
     async confirmSale(customerName) {
+        const flowStartedAt = Date.now();
+        const correlationId = (typeof crypto !== 'undefined' && crypto.randomUUID)
+            ? crypto.randomUUID()
+            : `flow_${Date.now()}`;
+
+        metricsService.emit('flow_started', {
+            flow_name: 'pos_checkout',
+            cart_items: this.cart.length
+        }, { correlationId });
+
         try {
             const modal = document.getElementById('checkout-modal');
-            
+
             // Prepare cart data
             let subtotal = 0;
             const items = this.cart.map(item => {
-                const itemSubtotal = item.price * item.qty - item.discount;
+                const price = Number(item.price) || 0;
+                const qty = Number(item.qty) || 0;
+                const discount = Number(item.discount) || 0;
+                const itemSubtotal = price * qty - discount;
                 subtotal += itemSubtotal;
                 return {
                     productId: item.id,
                     name: item.name,
-                    quantity: item.qty,
-                    price: item.price,
-                    discount: item.discount,
+                    quantity: qty,
+                    price: price,
+                    discount: discount,
                     subtotal: itemSubtotal
                 };
             });
@@ -200,16 +282,27 @@ export const POSCart = {
             // Close modal
             modal.classList.remove('active');
 
-            // Show success
             POSUI.showNotification('Sale completed!', 'success');
 
-            // Reload products
+            metricsService.emit('flow_completed', {
+                flow_name: 'pos_checkout',
+                duration_ms: Date.now() - flowStartedAt,
+                result: 'success',
+                items_sold: this.cart.length
+            }, { correlationId });
+
             if (window.POSMain) {
                 await window.POSMain.loadData();
             }
 
         } catch (error) {
-            console.error('Sale error:', error);
+            console.error('[POSCart] confirmSale error:', error);
+            metricsService.emit('flow_completed', {
+                flow_name: 'pos_checkout',
+                duration_ms: Date.now() - flowStartedAt,
+                result: 'blocked',
+                error_message: error?.message || String(error)
+            }, { correlationId });
             POSUI.showNotification('Sale failed: ' + error.message, 'error');
         }
     },

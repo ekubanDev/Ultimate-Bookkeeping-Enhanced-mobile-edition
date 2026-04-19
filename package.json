@@ -2,11 +2,13 @@
   "name": "ultimate-bookkeeping",
   "private": true,
   "scripts": {
+    "icons": "cd frontend && npm run icons",
     "build": "cd frontend && npm run build",
     "dev": "npm run build && node dev-server.js",
     "backend": "cd backend && source venv/bin/activate && uvicorn server:app --reload --host 0.0.0.0 --port 8000",
     "deploy": "npm run build && firebase deploy",
     "deploy:backend": "cd backend && gcloud run deploy bookkeeping-api --source . --region us-central1 --allow-unauthenticated",
+    "mcp:bookkeeping": "cd backend && python3 mcp_server.py",
     "serve": "npm run build && firebase serve",
     "mobile:build": "cd frontend && npm run cap:build",
     "mobile:android": "cd frontend && npm run cap:android",
@@ -17,6 +19,6 @@
   "devDependencies": {
     "express": "^5.1.0",
     "firebase-tools": "^13.0.0",
-    "http-proxy-middleware": "^3.0.8"
+    "http-proxy-middleware": "^3.0.5"
   }
 }

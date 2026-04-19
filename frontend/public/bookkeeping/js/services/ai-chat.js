@@ -2,6 +2,9 @@
  * AI Chat Service — floating chat window for business Q&A
  */
 
+import { auth } from '../config/firebase.js';
+import { isDebtPayment, getSaleTotal } from '../utils/accounting.js';
+
 const BACKEND_URL = window.BACKEND_URL || '';
 
 class AIChatService {
@@ -12,6 +15,10 @@ class AIChatService {
         this.state = null;
         this.elements = {};
         this.injected = false;
+        this._lastTapTs = 0;
+        this._lastTapType = '';
+        this._fabAttrObserver = null;
+        this.launcherButtons = [];
     }
 
     init(state) {
@@ -30,11 +37,6 @@ class AIChatService {
         const root = document.createElement('div');
         root.id = 'ai-chat-root';
         root.innerHTML = `
-            <button class="ai-chat-fab" id="ai-chat-fab" title="Ask AI">
-                <span class="fab-pulse"></span>
-                <i class="fas fa-robot"></i>
-            </button>
-
             <div class="ai-chat-window" id="ai-chat-window">
                 <div class="ai-chat-header">
                     <div class="ai-chat-header-left">
@@ -81,7 +83,7 @@ class AIChatService {
                     </div>
                     <div class="ai-chat-context">
                         <i class="fas fa-database"></i>
-                        <span>Using your live business data for context</span>
+                        <span>Answers use structured metrics from your loaded sales, inventory, and purchase orders</span>
                     </div>
                 </div>
             </div>
@@ -89,7 +91,6 @@ class AIChatService {
         document.body.appendChild(root);
 
         this.elements = {
-            fab: document.getElementById('ai-chat-fab'),
             window: document.getElementById('ai-chat-window'),
             messages: document.getElementById('ai-chat-messages'),
             welcome: document.getElementById('ai-chat-welcome'),
@@ -99,16 +100,82 @@ class AIChatService {
             clearBtn: document.getElementById('ai-chat-clear'),
             suggestions: document.getElementById('ai-chat-suggestions'),
         };
+
+        // Defensive: ensure FAB is never treated as disabled (especially in native app webviews).
+        this.ensureLauncherButtons();
+        this.bindLauncherButtons();
+    }
+
+    ensureLauncherButtons() {
+        const root = document.getElementById('ai-chat-root');
+
+        // FAB — the single launcher for all screen sizes (desktop, tablet, mobile)
+        if (root && !document.getElementById('ai-chat-fab')) {
+            const fab = document.createElement('button');
+            fab.id = 'ai-chat-fab';
+            fab.type = 'button';
+            fab.className = 'ai-chat-fab';
+            fab.setAttribute('aria-label', 'Open AI assistant');
+            fab.innerHTML = `<div class="fab-pulse"></div><i class="fas fa-robot"></i>`;
+            root.appendChild(fab);
+        }
+
+        // Mobile bottom nav launcher (kept for quick-nav convenience on small screens)
+        const bottomNav = document.getElementById('bottom-nav');
+        if (bottomNav && !document.getElementById('ai-chat-launcher-bottom')) {
+            const btn = document.createElement('button');
+            btn.id = 'ai-chat-launcher-bottom';
+            btn.type = 'button';
+            btn.className = 'bottom-nav-item ai-chat-launcher-bottom';
+            btn.setAttribute('aria-label', 'AI Assistant');
+            btn.innerHTML = `<i class="fas fa-robot"></i><span>AI</span>`;
+            bottomNav.appendChild(btn);
+        }
+    }
+
+    bindLauncherButtons() {
+        this.launcherButtons.forEach((btn) => btn?.removeEventListener?.('click', this._launcherHandler));
+        this._launcherHandler = () => this.toggle();
+        this.launcherButtons = [
+            document.getElementById('ai-chat-fab'),
+            document.getElementById('ai-chat-launcher-bottom'),
+        ].filter(Boolean);
+        this.launcherButtons.forEach((btn) => btn.addEventListener('click', this._launcherHandler));
     }
 
     bindEvents() {
-        const { fab, closeBtn, clearBtn, input, sendBtn, suggestions } = this.elements;
+        const { closeBtn, clearBtn, input, sendBtn, suggestions } = this.elements;
 
-        fab.addEventListener('click', () => this.toggle());
-        closeBtn.addEventListener('click', () => this.close());
-        clearBtn.addEventListener('click', () => this.clearConversation());
+        const bindTap = (el, handler) => {
+            if (!el) return;
+            const wrapped = (e) => {
+                const now = Date.now();
+                const t = e?.type || '';
+                // De-dupe synthetic follow-up events (touchend->click, pointerup->click, etc.).
+                if (now - this._lastTapTs < 350) {
+                    if (this._lastTapType === 'touchend' && t === 'click') return;
+                    if (this._lastTapType === 'pointerup' && (t === 'click' || t === 'touchend')) return;
+                    if (this._lastTapType === 'touchend' && t === 'pointerup') return;
+                    if (this._lastTapType === 'click' && (t === 'pointerup' || t === 'touchend')) return;
+                }
 
-        sendBtn.addEventListener('click', () => this.send());
+                this._lastTapTs = now;
+                this._lastTapType = t;
+                e?.preventDefault?.();
+                e?.stopPropagation?.();
+                handler(e);
+            };
+
+            if (typeof window !== 'undefined' && 'PointerEvent' in window) {
+                el.addEventListener('pointerup', wrapped, { passive: false });
+            }
+            el.addEventListener('touchend', wrapped, { passive: false });
+            el.addEventListener('click', wrapped);
+        };
+
+        bindTap(closeBtn, () => this.close());
+        bindTap(clearBtn, () => this.clearConversation());
+        bindTap(sendBtn, () => this.send());
 
         input.addEventListener('keydown', (e) => {
             if (e.key === 'Enter' && !e.shiftKey) {
@@ -122,15 +189,17 @@ class AIChatService {
             sendBtn.disabled = !input.value.trim();
         });
 
-        suggestions.addEventListener('click', (e) => {
-            const btn = e.target.closest('.ai-chat-suggestion');
-            if (btn) {
-                const q = btn.dataset.q;
-                input.value = q;
-                sendBtn.disabled = false;
-                this.send();
-            }
-        });
+        const handleSuggestion = (e) => {
+            const btn = e?.target?.closest?.('.ai-chat-suggestion');
+            if (!btn) return;
+            const q = btn.dataset.q;
+            input.value = q;
+            sendBtn.disabled = false;
+            this.send();
+        };
+        suggestions.addEventListener('click', handleSuggestion);
+        suggestions.addEventListener('pointerup', handleSuggestion, { passive: true });
+        suggestions.addEventListener('touchend', handleSuggestion, { passive: true });
 
         document.addEventListener('keydown', (e) => {
             if (e.key === 'Escape' && this.isOpen) this.close();
@@ -141,17 +210,45 @@ class AIChatService {
         this.isOpen ? this.close() : this.open();
     }
 
+    isMobileOrNative() {
+        try {
+            if (window.Capacitor?.isNativePlatform?.()) return true;
+        } catch (e) { /* ignore */ }
+        return typeof window.matchMedia === 'function' && window.matchMedia('(max-width: 768px)').matches;
+    }
+
     open() {
         this.isOpen = true;
-        this.elements.window.classList.add('open');
-        this.elements.fab.classList.add('hidden');
+        const win = this.elements.window;
+        if (this.isMobileOrNative()) {
+            win.classList.add('ai-chat-window--fullscreen');
+            this._aiScrollY = window.scrollY || window.pageYOffset || 0;
+            this._aiBodyOverflow = document.body.style.overflow;
+            this._aiHtmlOverflow = document.documentElement.style.overflow;
+            document.body.style.overflow = 'hidden';
+            document.documentElement.style.overflow = 'hidden';
+        }
+        win.classList.add('open');
         setTimeout(() => this.elements.input.focus(), 300);
     }
 
     close() {
         this.isOpen = false;
-        this.elements.window.classList.remove('open');
-        this.elements.fab.classList.remove('hidden');
+        const win = this.elements.window;
+        const hadScrollLock = this._aiBodyOverflow !== undefined;
+        win.classList.remove('open');
+        win.classList.remove('ai-chat-window--fullscreen');
+        if (hadScrollLock) {
+            document.body.style.overflow = this._aiBodyOverflow || '';
+            document.documentElement.style.overflow = this._aiHtmlOverflow || '';
+            this._aiBodyOverflow = undefined;
+            this._aiHtmlOverflow = undefined;
+            const y = this._aiScrollY ?? 0;
+            requestAnimationFrame(() => {
+                window.scrollTo(0, y);
+                window.dispatchEvent(new Event('resize'));
+            });
+        }
     }
 
     clearConversation() {
@@ -166,24 +263,69 @@ class AIChatService {
         textarea.style.height = Math.min(textarea.scrollHeight, 100) + 'px';
     }
 
+    /**
+     * Slim records for server-side tool aggregates (size-capped on the server too).
+     */
+    getAgentDatasets() {
+        const s = this.state || {};
+        const cap = (arr, n) => (Array.isArray(arr) ? arr.slice(0, n) : []);
+
+        const products = cap(s.allProducts, 2000).map((p) => ({
+            id: p.id,
+            name: p.name,
+            quantity: p.quantity,
+            minStock: p.minStock,
+            price: p.price,
+            cost: p.cost,
+            category: p.category,
+            lastSold: p.lastSold,
+            updatedAt: p.updatedAt,
+            lastRestockedAt: p.lastRestockedAt,
+            lastRestockSource: p.lastRestockSource,
+        }));
+
+        const sales = cap(s.allSales, 3500).map((sl) => ({
+            date: sl.date,
+            createdAt: sl.createdAt,
+            product: sl.product,
+            productId: sl.productId,
+            quantity: sl.quantity,
+            price: sl.price,
+            discount: sl.discount,
+        }));
+
+        const purchase_orders = cap(s.allPurchaseOrders || [], 600).map((po) => ({
+            id: po.id,
+            status: po.status,
+            receivedDate: po.receivedDate,
+            items: Array.isArray(po.items)
+                ? po.items.map((it) => ({
+                    productId: it.productId,
+                    productName: it.productName,
+                    quantity: it.quantity,
+                    receivedQuantity: it.receivedQuantity,
+                }))
+                : [],
+        }));
+
+        return { products, sales, purchase_orders };
+    }
+
     getBusinessContext() {
         const s = this.state || {};
         const products = s.allProducts || [];
         const sales = s.allSales || [];
         const expenses = s.allExpenses || [];
-        const operatingExpenses = expenses.filter(e => {
-            const type = (e.expenseType || '').toLowerCase();
-            const cat = (e.category || '').toLowerCase();
-            return type !== 'liability_payment' && cat !== 'debt payment' && cat !== 'loan repayment';
-        });
-        const debtPayments = expenses.filter(e => {
-            const type = (e.expenseType || '').toLowerCase();
-            const cat = (e.category || '').toLowerCase();
-            return type === 'liability_payment' || cat === 'debt payment' || cat === 'loan repayment';
-        });
-        const totalRevenue = sales.reduce((sum, sl) => sum + (sl.quantity || 0) * (sl.price || 0), 0);
+        const operatingExpenses = expenses.filter(e => !isDebtPayment(e));
+        const debtPaymentsFromExpenses = expenses.filter(e => isDebtPayment(e));
+        const debtFromTx = (s.allLiabilityPayments || []).reduce(
+            (sum, p) => sum + (parseFloat(p.amount) || 0),
+            0
+        );
+        const totalRevenue = sales.reduce((sum, sl) => sum + getSaleTotal(sl), 0);
         const totalExpenses = operatingExpenses.reduce((sum, e) => sum + (e.amount || 0), 0);
-        const totalDebtPayments = debtPayments.reduce((sum, e) => sum + (e.amount || 0), 0);
+        const totalDebtPayments =
+            debtFromTx + debtPaymentsFromExpenses.reduce((sum, e) => sum + (e.amount || 0), 0);
         const lowStock = products.filter(p => (p.quantity || 0) <= (p.minStock || 10));
 
         return {
@@ -209,20 +351,44 @@ class AIChatService {
 
         this.elements.welcome.style.display = 'none';
 
+        const history = this.messages.slice(-12).map((m) => ({
+            role: m.role,
+            content: m.text,
+        }));
+
         this.appendMessage('user', text);
         this.showTyping();
         this.isLoading = true;
 
         try {
+            const headers = { 'Content-Type': 'application/json' };
+            try {
+                const u = auth.currentUser;
+                if (u) {
+                    const token = await u.getIdToken();
+                    headers.Authorization = `Bearer ${token}`;
+                }
+            } catch (tokErr) {
+                console.warn('AI chat: ID token unavailable', tokErr);
+            }
+
             const response = await fetch(`${BACKEND_URL}/api/ai/chat`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers,
                 body: JSON.stringify({
                     question: text,
-                    context: this.getBusinessContext()
+                    context: this.getBusinessContext(),
+                    datasets: this.getAgentDatasets(),
+                    history,
                 })
             });
 
+            if (response.status === 401) {
+                throw new Error('Please sign in to use the AI assistant.');
+            }
+            if (response.status === 429) {
+                throw new Error('Too many AI requests. Please wait a moment and try again.');
+            }
             if (!response.ok) throw new Error(`Server error (${response.status})`);
 
             const data = await response.json();

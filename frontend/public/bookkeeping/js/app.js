@@ -42,15 +42,45 @@ import { EnhancedDashboard } from './services/enhanced-dashboard.js';
 
 // Import AI Chat
 import aiChatService from './services/ai-chat.js';
+import { metricsService } from './services/metrics-service.js';
+
+// ==================== PRODUCTION LOG SUPPRESSION ====================
+// Silence console.log and console.debug in production to prevent leaking
+// sensitive business data (sale totals, PO details, user IDs) via DevTools.
+// console.error and console.warn are preserved for critical runtime signals.
+(function suppressLogsInProduction() {
+    const isLocal = window.location.hostname === 'localhost'
+        || window.location.hostname === '127.0.0.1'
+        || window.location.hostname.startsWith('192.168.');
+    if (!isLocal) {
+        console.log   = () => {};
+        console.debug = () => {};
+        console.info  = () => {};
+    }
+})();
 
 // ==================== GLOBAL ERROR HANDLERS ====================
 window.addEventListener('error', (event) => {
     console.error('Global error:', event.error);
+    metricsService.emit('runtime_error', {
+        surface: 'frontend',
+        section: window.appController?._currentSection || 'other',
+        error_name: event.error?.name || 'Error',
+        error_message: event.error?.message || String(event.message || ''),
+        stack_hash: (event.error?.stack || '').slice(0, 240)
+    });
     Utils.showToast('An unexpected error occurred', 'error');
 });
 
 window.addEventListener('unhandledrejection', (event) => {
     console.error('Unhandled promise rejection:', event.reason);
+    metricsService.emit('runtime_error', {
+        surface: 'frontend',
+        section: window.appController?._currentSection || 'other',
+        error_name: 'UnhandledPromiseRejection',
+        error_message: String(event.reason?.message || event.reason || ''),
+        stack_hash: String(event.reason?.stack || '').slice(0, 240)
+    });
     Utils.showToast('An unexpected error occurred', 'error');
 });
 
@@ -137,6 +167,7 @@ async function initializeApp() {
         window.stockTransfer = stockTransfer;
         window.pdfExport = pdfExport;
         window.barcodeScanner = barcodeScanner;
+        window.metricsService = metricsService;
 
         const app = new AppController();
         window.appController = app;
@@ -152,7 +183,13 @@ async function initializeApp() {
             heavyInitDone = true;
             window.enhancedDashboard = new EnhancedDashboard();
             console.log('✅ Enhanced Dashboard initialized');
-            if (window.appController) window.appController.markSectionDirty('dashboard');
+            // Only trigger a dashboard refresh if auth + data are already loaded.
+            // If auth hasn't completed yet, the auth observer will call showSection('dashboard')
+            // after loadAll() finishes — no need to pre-fire a refresh into empty state.
+            if (window.appController && state.authInitialized && state.currentUser) {
+                window.appController.markSectionDirty('dashboard');
+                window.appController._refreshCurrentSectionIfDirty();
+            }
             barcodeScanner.initKeyboardScanner();
             aiChatService.init(state);
             window.aiChatService = aiChatService;

@@ -1,8 +1,63 @@
 /* ==================== AI CHAT WINDOW ==================== */
 
+/* Isolate overlay from document flow (avoids 100vw horizontal scroll on body) */
+#ai-chat-root {
+    position: fixed;
+    inset: 0;
+    width: 100%;
+    max-width: 100%;
+    height: 100%;
+    min-height: 100vh;
+    min-height: 100dvh;
+    pointer-events: none;
+    z-index: 500040;
+    overflow: hidden;
+    box-sizing: border-box;
+}
+
+/* FAB is always interactive */
+#ai-chat-root .ai-chat-fab {
+    pointer-events: auto !important;
+}
+
+/* Window only intercepts events when visibly open — prevents the
+   invisible 420×600 px panel from blocking content beneath it */
+#ai-chat-root .ai-chat-window.open {
+    pointer-events: auto !important;
+}
+
+/* Stable in-flow launchers (avoids fixed FAB/webview click quirks). */
+.ai-chat-launcher-btn {
+    background: linear-gradient(135deg, #1d9bf0, #9c27b0);
+    color: #fff;
+    border: none;
+    border-radius: 999px;
+    padding: 0.38rem 0.8rem;
+    font-size: 0.82rem;
+    font-weight: 600;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.ai-chat-launcher-btn:hover {
+    opacity: 0.92;
+}
+
+.bottom-nav-item.ai-chat-launcher-bottom {
+    display: inline-flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.15rem;
+}
+
 /* Floating Action Button */
 .ai-chat-fab {
     position: fixed;
+    isolation: isolate;
     bottom: 1.5rem;
     right: 1.5rem;
     width: 56px;
@@ -11,14 +66,28 @@
     background: linear-gradient(135deg, #1d9bf0, #9c27b0);
     color: white;
     border: none;
-    cursor: pointer;
+    cursor: pointer !important;
     display: flex;
     align-items: center;
     justify-content: center;
     font-size: 1.35rem;
     box-shadow: 0 4px 20px rgba(29, 155, 240, 0.4);
-    z-index: 9998;
+    z-index: 500050;
     transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    touch-action: manipulation; /* Ensure taps work on iOS */
+    pointer-events: auto !important;
+    cursor: pointer !important;
+}
+
+.ai-chat-fab[aria-disabled="true"] {
+    cursor: pointer !important;
+    opacity: 1 !important;
+    pointer-events: auto !important;
+}
+
+.ai-chat-fab i,
+.ai-chat-fab .fab-pulse {
+    pointer-events: none; /* Make full circle tap target */
 }
 
 .ai-chat-fab:hover {
@@ -30,6 +99,13 @@
     transform: scale(0);
     opacity: 0;
     pointer-events: none;
+}
+
+/* While POS modal is open, keep FAB out of the way. */
+body.pos-modal-open .ai-chat-fab {
+    opacity: 0 !important;
+    pointer-events: none !important;
+    transform: scale(0.8) !important;
 }
 
 .ai-chat-fab .fab-pulse {
@@ -55,13 +131,14 @@
     width: 420px;
     height: 600px;
     max-height: calc(100vh - 3rem);
+    max-height: calc(100dvh - 3rem);
     max-width: calc(100vw - 2rem);
     background: #0f1419;
     border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 16px;
     display: flex;
     flex-direction: column;
-    z-index: 9999;
+    z-index: 500051;
     box-shadow: 0 12px 48px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.05);
     overflow: hidden;
     transform: scale(0.5) translateY(20px);
@@ -518,20 +595,74 @@
     flex-shrink: 0;
 }
 
-/* Mobile Responsive */
-@media (max-width: 480px) {
-    .ai-chat-window {
+/* Native app + phones: true fullscreen with safe areas */
+.ai-chat-window.ai-chat-window--fullscreen {
+    inset: 0;
+    left: 0;
+    right: 0;
+    top: 0;
+    bottom: 0;
+    width: 100%;
+    max-width: 100%;
+    height: 100%;
+    min-height: 100vh;
+    min-height: 100dvh;
+    max-height: 100dvh;
+    border-radius: 0;
+    transform: none !important; /* Always disable base scale animation in fullscreen */
+    transform-origin: center bottom;
+    padding-bottom: env(safe-area-inset-bottom, 0);
+    padding-top: env(safe-area-inset-top, 0);
+    box-sizing: border-box;
+}
+
+/* When fullscreen is enabled, disable the base open() transform.
+   Without this override, the transform-based animation can still
+   affect sizing/positioning on mobile WebViews and cause clipping/overflow. */
+.ai-chat-window.ai-chat-window--fullscreen.open {
+    transform: none !important;
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.ai-chat-window.ai-chat-window--fullscreen .ai-chat-messages {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+}
+
+.ai-chat-window.ai-chat-window--fullscreen .ai-chat-welcome {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    justify-content: flex-start;
+    padding-top: 1rem;
+    padding-bottom: 1rem;
+}
+
+.ai-chat-window.ai-chat-window--fullscreen .ai-chat-input-area {
+    padding-bottom: calc(0.75rem + env(safe-area-inset-bottom, 0));
+}
+
+/* Mobile Responsive (narrow browser) */
+@media (max-width: 768px) {
+    .ai-chat-window:not(.ai-chat-window--fullscreen) {
         bottom: 0;
         right: 0;
-        width: 100vw;
-        height: 100vh;
-        max-height: 100vh;
-        max-width: 100vw;
+        left: 0;
+        top: auto;
+        width: 100%;
+        max-width: 100%;
+        height: 100%;
+        min-height: 100dvh;
+        max-height: 100dvh;
         border-radius: 0;
+        padding-bottom: env(safe-area-inset-bottom, 0);
     }
 
     .ai-chat-fab {
-        bottom: 1rem;
+        bottom: calc(1rem + env(safe-area-inset-bottom, 0));
         right: 1rem;
         width: 50px;
         height: 50px;

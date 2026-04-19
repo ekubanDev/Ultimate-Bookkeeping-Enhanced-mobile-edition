@@ -3,6 +3,8 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
+    // ── Helper functions ──────────────────────────────────────────────────────
+
     function isAuth() {
       return request.auth != null;
     }
@@ -11,85 +13,148 @@ service cloud.firestore {
       return isAuth() && request.auth.uid == userId;
     }
 
-    // ── Top-level business collections ──
-    // Authenticated users can read/write shared business data
+    // Returns the requesting user's profile document data.
+    // Used to verify outlet-manager relationship without extra round trips.
+    function myProfile() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    // True when the requesting user is an outlet manager belonging to adminUid.
+    function isOutletManagerFor(adminUid) {
+      let p = myProfile();
+      return isAuth()
+        && p.get('role', '') == 'outlet_manager'
+        && p.get('createdBy', '') == adminUid;
+    }
+
+    // True when the requesting user is the outlet manager assigned to a specific outlet.
+    function isManagerForOutlet(adminUid, outletId) {
+      let p = myProfile();
+      return isAuth()
+        && p.get('role', '') == 'outlet_manager'
+        && p.get('createdBy', '') == adminUid
+        && p.get('assignedOutlet', '') == outletId;
+    }
+
+    // For root-level legacy documents: if createdBy exists it must match; if absent
+    // the document is treated as belonging to any authenticated user (migration path).
+    function ownedByMe() {
+      return isAuth()
+        && resource.data.get('createdBy', request.auth.uid) == request.auth.uid;
+    }
+
+    function writtenByMe() {
+      return isAuth()
+        && request.resource.data.get('createdBy', request.auth.uid) == request.auth.uid;
+    }
+
+    // ── Root-level legacy collections (scoped by createdBy field) ────────────
+    // These are the original flat collections before user-scoped paths were adopted.
+    // New writes must include createdBy; reads are gated to the owning user only.
 
     match /inventory/{docId} {
-      allow read, write: if isAuth();
+      allow read:   if ownedByMe();
+      allow write:  if writtenByMe();
     }
 
     match /sales/{docId} {
-      allow read, write: if isAuth();
+      allow read:   if ownedByMe();
+      allow write:  if writtenByMe();
     }
 
     match /expenses/{docId} {
-      allow read, write: if isAuth();
+      allow read:   if ownedByMe();
+      allow write:  if writtenByMe();
     }
 
     match /customers/{docId} {
-      allow read, write: if isAuth();
+      allow read:   if ownedByMe();
+      allow write:  if writtenByMe();
     }
 
     match /liabilities/{docId} {
-      allow read, write: if isAuth();
+      allow read:   if ownedByMe();
+      allow write:  if writtenByMe();
     }
 
     match /suppliers/{docId} {
-      allow read, write: if isAuth();
+      allow read:   if ownedByMe();
+      allow write:  if writtenByMe();
     }
 
     match /purchase_orders/{docId} {
-      allow read, write: if isAuth();
+      allow read:   if ownedByMe();
+      allow write:  if writtenByMe();
     }
 
     match /payment_transactions/{docId} {
-      allow read, write: if isAuth();
+      allow read:   if ownedByMe();
+      allow write:  if writtenByMe();
     }
 
     match /recurring_expenses/{docId} {
-      allow read, write: if isAuth();
+      allow read:   if ownedByMe();
+      allow write:  if writtenByMe();
     }
 
-    // Catch-all for any other top-level business collections
+    // Catch-all for any other root-level non-user collections (legacy safety net)
     match /{collection}/{docId} {
-      allow read, write: if isAuth()
-        && collection != 'users';
+      allow read:  if ownedByMe() && collection != 'users';
+      allow write: if writtenByMe() && collection != 'users';
     }
 
-    // ── Outlets (top-level) and subcollections ──
+    // ── Top-level outlets collection (legacy) ────────────────────────────────
 
     match /outlets/{outletId} {
-      allow read, write: if isAuth();
+      allow read:  if ownedByMe();
+      allow write: if writtenByMe();
 
       match /{sub}/{docId} {
-        allow read, write: if isAuth();
+        allow read:  if ownedByMe();
+        allow write: if writtenByMe();
       }
     }
 
-    // ── User profiles and nested data ──
-    // Owner has full access; other auth users can read
-    // (outlet managers must read their admin's user doc and outlet data)
+    // ── User profiles and all user-scoped data ───────────────────────────────
 
     match /users/{userId} {
-      allow read: if isAuth();
-      allow write: if isOwner(userId);
+      // Owner: full access.
+      // Outlet manager: read-only on the admin's profile (needed to resolve parentAdminId).
+      allow read:  if isOwner(userId) || isOutletManagerFor(userId);
+      // Owner writes their own profile. Admins may also create outlet manager profiles
+      // (different UID) as long as the written doc declares createdBy = admin's UID
+      // and assigns the outlet_manager role (prevents privilege escalation).
+      allow write: if isOwner(userId)
+        || (isAuth()
+            && request.resource.data.get('createdBy', '') == request.auth.uid
+            && request.resource.data.get('role', '') == 'outlet_manager');
 
+      // Managed users list — admin only
       match /managed_users/{docId} {
         allow read, write: if isOwner(userId);
       }
 
-      match /outlets/{outletId} {
-        allow read, write: if isAuth();
-
-        match /{sub}/{docId} {
-          allow read, write: if isAuth();
-        }
+      // General user-scoped subcollections (expenses, customers, liabilities,
+      // payment_transactions, recurring_expenses, inventory, etc.)
+      // Admin: full access. Outlet managers: read-only (they transact via outlet paths).
+      match /{subcollection}/{docId} {
+        allow read:  if isOwner(userId) || isOutletManagerFor(userId);
+        allow write: if isOwner(userId);
       }
 
-      // Other direct subcollections (expenses, customers, liabilities, etc.)
-      match /{subcollection}/{docId} {
-        allow read: if isAuth();
+      // Outlet documents under admin — readable by the admin and any manager of that outlet
+      match /outlets/{outletId} {
+        allow read:  if isOwner(userId) || isManagerForOutlet(userId, outletId);
         allow write: if isOwner(userId);
+
+        // Outlet subcollections (outlet_inventory, outlet_sales, outlet_expenses,
+        // consignments, settlements, etc.)
+        // Admin: full access.
+        // The assigned outlet manager: read and write (they record sales, expenses, etc.)
+        match /{sub}/{docId} {
+          allow read:  if isOwner(userId) || isManagerForOutlet(userId, outletId);
+          allow write: if isOwner(userId) || isManagerForOutlet(userId, outletId);
+        }
       }
     }
   }

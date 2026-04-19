@@ -25,8 +25,13 @@ app.use('/api', createProxyMiddleware({
 
 app.use(express.static(path.join(__dirname, 'frontend', 'build')));
 
-app.get('/bookkeeping/*', (req, res) => {
-    const filePath = path.join(__dirname, 'frontend', 'build', req.path);
+// Serve the bookkeeping SPA routes. Express 5 / path-to-regexp
+// requires either a named splat parameter (rest*) or a custom
+// regexp like (.*) instead of a bare "*" segment.
+app.get(['/bookkeeping', '/bookkeeping/:rest(.*)'], (req, res) => {
+    const rest = req.params.rest || '';
+    const filePath = path.join(__dirname, 'frontend', 'build', 'bookkeeping', rest);
+
     res.sendFile(filePath, (err) => {
         if (err) {
             res.sendFile(path.join(__dirname, 'frontend', 'build', 'bookkeeping', 'index.html'));

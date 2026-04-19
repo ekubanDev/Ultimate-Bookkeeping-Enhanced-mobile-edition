@@ -1,26 +1,34 @@
 // ==================== FINANCIAL REPORTS MODAL ====================
-// Mobile-friendly financial reports viewer
-// Replaces window.open() with in-app modal display
+// Mobile-friendly financial reports viewer + native save/share via Capacitor
+
+import {
+    sharePdfBlobBestEffort,
+    downloadPdfBlobInBrowser,
+    PDF_SHARE_UNAVAILABLE,
+} from './native-pdf-save.js';
 
 export class FinancialReportsModal {
-    
-    /**
-     * Show a financial report in a modal
-     * @param {string} reportHTML - The HTML content of the report
-     * @param {string} reportTitle - Title of the report
-     * @param {string} reportType - Type: 'income-statement', 'balance-sheet', 'cash-flow'
-     */
-    static show(reportHTML, reportTitle, reportType) {
-        // Remove any existing report modal
-        const existing = document.querySelector('.financial-report-modal');
-        if (existing) existing.remove();
-        
-        // Extract just the body content from reportHTML
+
+    static parseReportBodyHTML(reportHTML) {
+        try {
+            const doc = new DOMParser().parseFromString(reportHTML, 'text/html');
+            if (doc.body && doc.body.innerHTML.trim()) {
+                return doc.body.innerHTML;
+            }
+        } catch (e) {
+            console.warn('parseReportBodyHTML:', e);
+        }
         const tempDiv = document.createElement('div');
         tempDiv.innerHTML = reportHTML;
-        const bodyContent = tempDiv.querySelector('body')?.innerHTML || reportHTML;
-        
-        // Create modal
+        return tempDiv.querySelector('body')?.innerHTML || reportHTML;
+    }
+
+    static show(reportHTML, reportTitle, reportType) {
+        const existing = document.querySelector('.financial-report-modal');
+        if (existing) existing.remove();
+
+        const bodyContent = this.parseReportBodyHTML(reportHTML);
+
         const modal = document.createElement('div');
         modal.className = 'financial-report-modal';
         modal.innerHTML = `
@@ -32,13 +40,13 @@ export class FinancialReportsModal {
                     </button>
                     <h2 class="report-title">${reportTitle}</h2>
                     <div class="report-actions">
-                        <button class="report-action-btn print-btn" aria-label="Print" title="Print Report">
+                        <button class="report-action-btn print-btn" aria-label="Print" title="Print / open PDF">
                             <i class="fas fa-print"></i>
                         </button>
-                        <button class="report-action-btn share-btn" aria-label="Share" title="Share Report">
+                        <button class="report-action-btn share-btn" aria-label="Share" title="Share report">
                             <i class="fas fa-share-alt"></i>
                         </button>
-                        <button class="report-action-btn download-btn" aria-label="Download" title="Download PDF">
+                        <button class="report-action-btn download-btn" aria-label="Download" title="Save PDF">
                             <i class="fas fa-download"></i>
                         </button>
                     </div>
@@ -48,49 +56,26 @@ export class FinancialReportsModal {
                 </div>
             </div>
         `;
-        
+
         document.body.appendChild(modal);
-        
-        // Add event listeners
         this.setupEventListeners(modal, reportHTML, reportTitle, reportType);
-        
-        // Prevent body scroll
         document.body.style.overflow = 'hidden';
-        
-        // Animate in
-        setTimeout(() => modal.classList.add('active'), 10);
+        requestAnimationFrame(() => modal.classList.add('active'));
     }
-    
-    /**
-     * Setup event listeners for modal actions
-     */
+
     static setupEventListeners(modal, reportHTML, reportTitle, reportType) {
-        // Close button
-        modal.querySelector('.report-back-btn').addEventListener('click', () => {
-            this.close(modal);
-        });
-        
-        // Close on overlay click
-        modal.querySelector('.report-modal-overlay').addEventListener('click', () => {
-            this.close(modal);
-        });
-        
-        // Print button
+        modal.querySelector('.report-back-btn').addEventListener('click', () => this.close(modal));
+        modal.querySelector('.report-modal-overlay').addEventListener('click', () => this.close(modal));
         modal.querySelector('.print-btn').addEventListener('click', () => {
-            this.handlePrint(modal, reportHTML, reportTitle);
+            this.handlePrint(modal, reportHTML, reportTitle, reportType);
         });
-        
-        // Share button
         modal.querySelector('.share-btn').addEventListener('click', () => {
             this.handleShare(modal, reportHTML, reportTitle, reportType);
         });
-        
-        // Download button
         modal.querySelector('.download-btn').addEventListener('click', () => {
             this.handleDownload(modal, reportHTML, reportTitle, reportType);
         });
-        
-        // ESC key to close
+
         const escHandler = (e) => {
             if (e.key === 'Escape') {
                 this.close(modal);
@@ -99,227 +84,226 @@ export class FinancialReportsModal {
         };
         document.addEventListener('keydown', escHandler);
     }
-    
-    /**
-     * Close the modal
-     */
+
     static close(modal) {
         modal.classList.remove('active');
         document.body.style.overflow = '';
         setTimeout(() => modal.remove(), 300);
     }
-    
-    /**
-     * Handle print action
-     */
-    static async handlePrint(modal, reportHTML, reportTitle) {
-        if (this.isCapacitor()) {
-            // Mobile: Generate PDF and use native print
-            await this.printViaPDF(reportHTML, reportTitle);
-        } else {
-            // Desktop: Use window.print()
-            const printWindow = window.open('', '_blank');
-            printWindow.document.write(reportHTML);
-            printWindow.document.close();
-            printWindow.print();
-        }
+
+    static isNativeCapacitor() {
+        return window.Capacitor?.isNativePlatform?.() === true;
     }
-    
-    /**
-     * Handle share action
-     */
-    static async handleShare(modal, reportHTML, reportTitle, reportType) {
-        if (!this.isCapacitor()) {
-            // Desktop: Show message or fallback to print
-            if (typeof Utils !== 'undefined' && Utils.showToast) {
-                Utils.showToast('Share feature is available on mobile app', 'info');
-            }
-            return;
-        }
-        
-        try {
-            // Generate PDF
-            const pdfBlob = await this.generatePDF(reportHTML, reportTitle);
-            
-            // Save to temporary file
-            const { Filesystem, Directory } = await import('@capacitor/filesystem');
-            const base64Data = await this.blobToBase64(pdfBlob);
-            const fileName = `${reportType}-${Date.now()}.pdf`;
-            
-            const result = await Filesystem.writeFile({
-                path: fileName,
-                data: base64Data,
-                directory: Directory.Cache
-            });
-            
-            // Share the file
-            const { Share } = await import('@capacitor/share');
-            await Share.share({
-                title: reportTitle,
-                text: `${reportTitle} - Generated on ${new Date().toLocaleDateString()}`,
-                url: result.uri,
-                dialogTitle: 'Share Report'
-            });
-            
-            if (typeof Utils !== 'undefined' && Utils.showToast) {
-                Utils.showToast('Report shared successfully', 'success');
-            }
-        } catch (error) {
-            console.error('Share error:', error);
-            if (typeof Utils !== 'undefined' && Utils.showToast) {
-                Utils.showToast('Failed to share report: ' + error.message, 'error');
-            }
-        }
+
+    static async loadScript(src) {
+        return new Promise((resolve, reject) => {
+            const script = document.createElement('script');
+            script.src = src;
+            script.crossOrigin = 'anonymous';
+            script.onload = resolve;
+            script.onerror = () => reject(new Error('Failed to load ' + src));
+            document.head.appendChild(script);
+        });
     }
-    
-    /**
-     * Handle download action
-     */
-    static async handleDownload(modal, reportHTML, reportTitle, reportType) {
-        try {
-            const pdfBlob = await this.generatePDF(reportHTML, reportTitle);
-            
-            if (this.isCapacitor()) {
-                // Mobile: Save to Downloads or Documents
-                const { Filesystem, Directory } = await import('@capacitor/filesystem');
-                const base64Data = await this.blobToBase64(pdfBlob);
-                const fileName = `${reportType}-${Date.now()}.pdf`;
-                
-                await Filesystem.writeFile({
-                    path: fileName,
-                    data: base64Data,
-                    directory: Directory.Documents
-                });
-                
-                if (typeof Utils !== 'undefined' && Utils.showToast) {
-                    Utils.showToast('Report saved to Documents', 'success');
-                }
-            } else {
-                // Desktop: Trigger download
-                const url = URL.createObjectURL(pdfBlob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = `${reportType}-${Date.now()}.pdf`;
-                document.body.appendChild(a);
-                a.click();
-                document.body.removeChild(a);
-                URL.revokeObjectURL(url);
-                
-                if (typeof Utils !== 'undefined' && Utils.showToast) {
-                    Utils.showToast('Report downloaded', 'success');
-                }
-            }
-        } catch (error) {
-            console.error('Download error:', error);
-            if (typeof Utils !== 'undefined' && Utils.showToast) {
-                Utils.showToast('Failed to download report: ' + error.message, 'error');
-            }
+
+    static async generatePDF(modal, reportTitle) {
+        const bodyEl = modal.querySelector('.report-modal-body');
+        if (!bodyEl) {
+            throw new Error('Report content not found');
         }
-    }
-    
-    /**
-     * Generate PDF from HTML
-     */
-    static async generatePDF(reportHTML, reportTitle) {
-        // Check if jsPDF is available
+
         if (typeof window.jspdf === 'undefined') {
-            // Load jsPDF dynamically
             await this.loadScript('https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js');
         }
-        
-        // Check if html2canvas is available
         if (typeof html2canvas === 'undefined') {
             await this.loadScript('https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js');
         }
-        
-        const { jsPDF } = window.jspdf;
-        const pdf = new jsPDF('p', 'mm', 'a4');
-        
-        // Create temporary container for rendering
-        const container = document.createElement('div');
-        container.style.position = 'absolute';
-        container.style.left = '-9999px';
-        container.style.width = '210mm'; // A4 width
-        container.innerHTML = reportHTML;
-        document.body.appendChild(container);
-        
-        // Convert to canvas
-        const canvas = await html2canvas(container.querySelector('body') || container, {
-            scale: 2,
-            useCORS: true,
-            logging: false
-        });
-        
-        document.body.removeChild(container);
-        
-        // Add canvas to PDF
-        const imgData = canvas.toDataURL('image/png');
-        const imgWidth = 210; // A4 width in mm
-        const imgHeight = (canvas.height * imgWidth) / canvas.width;
-        
-        pdf.addImage(imgData, 'PNG', 0, 0, imgWidth, imgHeight);
-        
-        return pdf.output('blob');
-    }
-    
-    /**
-     * Print via PDF (for mobile)
-     */
-    static async printViaPDF(reportHTML, reportTitle) {
+
+        const clone = bodyEl.cloneNode(true);
+        clone.style.position = 'absolute';
+        clone.style.left = '-9999px';
+        clone.style.top = '0';
+        clone.style.width = '794px';
+        clone.style.background = '#ffffff';
+        clone.style.padding = '24px';
+        document.body.appendChild(clone);
+
         try {
-            const pdfBlob = await this.generatePDF(reportHTML, reportTitle);
-            const pdfUrl = URL.createObjectURL(pdfBlob);
-            
-            // Try to open in system PDF viewer
-            if (this.isCapacitor()) {
-                const { Browser } = await import('@capacitor/browser');
-                await Browser.open({ url: pdfUrl });
+            const canvas = await html2canvas(clone, {
+                scale: Math.min(2, window.devicePixelRatio || 2),
+                useCORS: true,
+                logging: false,
+                backgroundColor: '#ffffff',
+            });
+            const { jsPDF } = window.jspdf;
+            const pdf = new jsPDF('p', 'mm', 'a4');
+            const pageW = pdf.internal.pageSize.getWidth();
+            const pageH = pdf.internal.pageSize.getHeight();
+            const margin = 10;
+            const imgW = pageW - 2 * margin;
+            const imgData = canvas.toDataURL('image/png', 0.92);
+            const imgH = (canvas.height * imgW) / canvas.width;
+            let heightLeft = imgH;
+            let position = margin;
+
+            pdf.addImage(imgData, 'PNG', margin, position, imgW, imgH);
+            heightLeft -= pageH - 2 * margin;
+
+            while (heightLeft > 0) {
+                position = heightLeft - imgH + margin;
+                pdf.addPage();
+                pdf.addImage(imgData, 'PNG', margin, position, imgW, imgH);
+                heightLeft -= pageH - 2 * margin;
+            }
+
+            return pdf.output('blob');
+        } finally {
+            document.body.removeChild(clone);
+        }
+    }
+
+    static async savePdfAndShare(pdfBlob, fileName, reportTitle, successMessage) {
+        if (typeof Utils !== 'undefined' && Utils.showToast) {
+            Utils.showToast('Generating PDF for sharing…', 'info');
+        }
+
+        const hint = successMessage || 'Save to Files, email, or another app';
+        const safeName = String(fileName).replace(/[^a-zA-Z0-9._-]/g, '_');
+
+        try {
+            await sharePdfBlobBestEffort(pdfBlob, safeName, reportTitle, hint);
+        } catch (shareErr) {
+            if (shareErr && shareErr.name === 'AbortError') return;
+            if (shareErr && String(shareErr.message || '').toLowerCase().includes('cancel')) {
+                return;
+            }
+            if (shareErr && (shareErr.code === PDF_SHARE_UNAVAILABLE || shareErr.message === PDF_SHARE_UNAVAILABLE)) {
+                try {
+                    downloadPdfBlobInBrowser(pdfBlob, fileName);
+                } catch (dl) {
+                    console.error('PDF download fallback failed:', dl);
+                    throw shareErr;
+                }
             } else {
-                window.open(pdfUrl, '_blank');
+                try {
+                    downloadPdfBlobInBrowser(pdfBlob, fileName);
+                } catch (dl) {
+                    throw shareErr;
+                }
+            }
+        }
+
+        if (typeof Utils !== 'undefined' && Utils.showToast) {
+            Utils.showToast(successMessage || 'Use the share sheet to save your PDF', 'success');
+        }
+    }
+
+    static async handlePrint(modal, reportHTML, reportTitle, reportType) {
+        const fileName = `${reportType || 'report'}-${Date.now()}.pdf`;
+        try {
+            if (this.isNativeCapacitor()) {
+                if (typeof Utils !== 'undefined' && Utils.showToast) {
+                    Utils.showToast('Preparing report (native)…', 'info');
+                }
+                const pdfBlob = await this.generatePDF(modal, reportTitle);
+                await this.savePdfAndShare(
+                    pdfBlob,
+                    fileName,
+                    reportTitle,
+                    'Open share sheet to print or save the PDF'
+                );
+                return;
+            }
+            const printWindow = window.open('', '_blank');
+            if (printWindow) {
+                printWindow.document.write(reportHTML);
+                printWindow.document.close();
+                printWindow.focus();
+                printWindow.print();
+            } else {
+                const pdfBlob = await this.generatePDF(modal, reportTitle);
+                const url = URL.createObjectURL(pdfBlob);
+                window.open(url, '_blank');
             }
         } catch (error) {
             console.error('Print error:', error);
             if (typeof Utils !== 'undefined' && Utils.showToast) {
-                Utils.showToast('Failed to print: ' + error.message, 'error');
+                Utils.showToast('Print failed: ' + (error.message || error), 'error');
             }
         }
     }
-    
-    /**
-     * Convert Blob to Base64
-     */
-    static blobToBase64(blob) {
-        return new Promise((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onloadend = () => {
-                const base64 = reader.result.split(',')[1];
-                resolve(base64);
-            };
-            reader.onerror = reject;
-            reader.readAsDataURL(blob);
-        });
+
+    static async handleShare(modal, reportHTML, reportTitle, reportType) {
+        const fileName = `${reportType || 'report'}-${Date.now()}.pdf`;
+        try {
+            if (!this.isNativeCapacitor()) {
+                if (typeof Utils !== 'undefined' && Utils.showToast) {
+                    Utils.showToast('Generating PDF…', 'info');
+                }
+                const pdfBlob = await this.generatePDF(modal, reportTitle);
+                const url = URL.createObjectURL(pdfBlob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = fileName;
+                a.click();
+                URL.revokeObjectURL(url);
+                return;
+            }
+            const pdfBlob = await this.generatePDF(modal, reportTitle);
+            await this.savePdfAndShare(
+                pdfBlob,
+                fileName,
+                reportTitle,
+                'Share or save this report'
+            );
+        } catch (error) {
+            console.error('Share error:', error);
+            if (typeof Utils !== 'undefined' && Utils.showToast) {
+                Utils.showToast('Share failed: ' + (error.message || error), 'error');
+            }
+        }
     }
-    
-    /**
-     * Load external script
-     */
-    static loadScript(src) {
-        return new Promise((resolve, reject) => {
-            const script = document.createElement('script');
-            script.src = src;
-            script.onload = resolve;
-            script.onerror = reject;
-            document.head.appendChild(script);
-        });
-    }
-    
-    /**
-     * Check if running in Capacitor
-     */
-    static isCapacitor() {
-        return window.Capacitor !== undefined;
+
+    static async handleDownload(modal, reportHTML, reportTitle, reportType) {
+        const fileName = `${reportType || 'report'}-${Date.now()}.pdf`;
+        try {
+            const pdfBlob = await this.generatePDF(modal, reportTitle);
+
+            if (this.isNativeCapacitor()) {
+                if (typeof Utils !== 'undefined' && Utils.showToast) {
+                    Utils.showToast('Saving report to device…', 'info');
+                }
+                await this.savePdfAndShare(
+                    pdfBlob,
+                    fileName,
+                    reportTitle,
+                    'Tap Save to Files to download the PDF'
+                );
+                return;
+            }
+
+            const url = URL.createObjectURL(pdfBlob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = fileName;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+            if (typeof Utils !== 'undefined' && Utils.showToast) {
+                const label = (reportTitle || reportType || 'Report').trim();
+                Utils.showToast(
+                    `Saved: ${label}\nFile: ${fileName}`,
+                    'success'
+                );
+            }
+        } catch (error) {
+            console.error('Download error:', error);
+            if (typeof Utils !== 'undefined' && Utils.showToast) {
+                Utils.showToast('Download failed: ' + (error.message || error), 'error');
+            }
+        }
     }
 }
 
-// Export for use in other modules
 window.FinancialReportsModal = FinancialReportsModal;

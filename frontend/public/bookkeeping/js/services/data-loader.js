@@ -12,121 +12,180 @@ import { state } from '../utils/state.js';
 import { Utils } from '../utils/utils.js';
 import { firebaseService } from './firebase-service.js';
 
+/** WebKit: empty local cache before server merge; retry with server source when online. */
+async function fetchCollectionRows(colRef, label = 'collection') {
+    const pull = async (getOpts) => {
+        const snapshot = await colRef.get(getOpts);
+        const rows = [];
+        snapshot.forEach((docSnap) => {
+            rows.push({ id: docSnap.id, ...docSnap.data() });
+        });
+        return { snapshot, rows };
+    };
+    let { rows } = await pull();
+    if (rows.length === 0 && typeof navigator !== 'undefined' && navigator.onLine) {
+        try {
+            const second = await pull({ source: 'server' });
+            if (second.rows.length > 0) {
+                console.log(`[DataLoader] ${label}: ${second.rows.length} docs from server (cache was empty)`);
+                return second.rows;
+            }
+        } catch (e) {
+            console.warn(`[DataLoader] ${label}: server read failed`, e?.message || e);
+        }
+    }
+    return rows;
+}
+
+/**
+ * Stock value for Outlets Management: canonical data lives under
+ * users/{ownerUid}/outlets/{outletId}/outlet_inventory (POS, transfers, consignment confirm).
+ * Legacy consignments used subcollection name "inventory" — include those lines when not superseded by productId.
+ */
+async function computeOutletInventoryValue(db, ownerUid, outletId) {
+    const lineValue = (item) => {
+        const qty = parseFloat(item.quantity) || 0;
+        let unit = parseFloat(item.cost);
+        if (!Number.isFinite(unit) || unit <= 0) unit = parseFloat(item.unitCost) || 0;
+        if (!Number.isFinite(unit) || unit <= 0) unit = parseFloat(item.price) || 0;
+        if (!Number.isFinite(unit) || unit <= 0) unit = parseFloat(item.retail) || 0;
+        return qty * unit;
+    };
+
+    const seenProductKeys = new Set();
+    let total = 0;
+
+    // Fetch both collections in parallel — they are independent reads
+    const oiRef  = collection(db, 'users', ownerUid, 'outlets', outletId, 'outlet_inventory');
+    const legRef = collection(db, 'users', ownerUid, 'outlets', outletId, 'inventory');
+    const [snapOI, snapLeg] = await Promise.all([getDocs(oiRef), getDocs(legRef)]);
+
+    snapOI.forEach((docSnap) => {
+        const item = docSnap.data();
+        const key = String(item.productId ?? docSnap.id);
+        seenProductKeys.add(key);
+        total += lineValue(item);
+    });
+
+    snapLeg.forEach((docSnap) => {
+        const item = docSnap.data();
+        const key = String(item.productId ?? docSnap.id);
+        if (seenProductKeys.has(key)) return;
+        total += lineValue(item);
+    });
+
+    return total;
+}
+
 class DataLoaderService {
 
             async loadProducts() {
                 if (!state.currentUser) return;
-                
-                console.log('=== LOADING PRODUCTS ===');
-                console.log('User role:', state.userRole);
-                
+
                 try {
                     state.allProducts = [];
-                    //const outlet = state.allOutlets.find(o => o.id === state.assignedOutlet);
                     if (state.userRole === 'outlet_manager' && state.assignedOutlet) {
                         // OUTLET MANAGER: Load from outlet inventory
                         const outlet = state.allOutlets[0]; // Already loaded with parentAdminId
-                        console.log('OUTLETS:', outlet);
                         if (!outlet || !outlet.createdBy) {
-                            console.error('❌ Outlet not loaded or missing parentAdminId');
+                            console.error('[DataLoader] loadProducts: outlet not loaded or missing parentAdminId');
                             return;
                         }
-                        
+
                         const parentAdminId = outlet.createdBy;
                         const outletId = state.assignedOutlet;
-                        
-                        console.log('📦 Loading outlet inventory from:', `users/${parentAdminId}/outlets/${outletId}/inventory`);
-                        
+
                         const inventoryRef = collection(db, 'users', parentAdminId, 'outlets', outletId, 'outlet_inventory');
-                        const snapshot = await getDocs(inventoryRef);
-                        
-                        snapshot.forEach(doc => {
-                            state.allProducts.push({
-                                id: doc.id,
-                                ...doc.data()
-                            });
-                        });
-                        
-                        console.log('✓ Loaded outlet products:', state.allProducts.length);
-                        
+                        let rows = await fetchCollectionRows(inventoryRef, `outlet_inventory:${outletId}`);
+                        if (rows.length === 0 && parentAdminId) {
+                            const extra = await fetchCollectionRows(
+                                collection(db, 'users', parentAdminId, 'inventory'),
+                                'parent_inventory_fallback'
+                            );
+                            rows = rows.concat(extra);
+                        }
+                        state.allProducts = rows;
+
                     } else {
-                        // ADMIN: Load from main inventory
-                        console.log('📦 Loading main inventory from:', `users/${state.currentUser.uid}/inventory`);
-                        
-                        const productsRef = collection(db, 'inventory');
-                        const snapshot = await getDocs(productsRef);
-                        
-                        snapshot.forEach(doc => {
-                            state.allProducts.push({
-                                id: doc.id,
-                                ...doc.data()
-                            });
-                        });
-                        
-                        console.log('✓ Loaded main products:', state.allProducts.length);
+                        // ADMIN: same paths as POS — user-scoped inventory first, then legacy root
+                        const uid = state.currentUser.uid;
+                        let rows = await fetchCollectionRows(
+                            collection(db, 'users', uid, 'inventory'),
+                            `users/${uid}/inventory`
+                        );
+                        if (rows.length === 0) {
+                            rows = await fetchCollectionRows(collection(db, 'inventory'), 'inventory_legacy');
+                        }
+                        state.allProducts = rows;
                     }
-                    
+
                 } catch (error) {
-                    console.error('❌ Error loading products:', error);
+                    console.error('[DataLoader] loadProducts error:', error);
+                    state.loadErrors.products = true;
+                    Utils.showToast('Failed to load inventory — check your connection and refresh', 'error');
                 }
             }
 
             async loadSales() {
                 if (!state.currentUser) return;
-                
-                
-                console.log('=== LOADING SALES ===');
-                console.log('User role:', state.userRole);
-                console.log('Assigned Outlet:', state.assignedOutlet);
-                
+
                 try {
                     state.allSales = [];
-                    
+
                     if (state.userRole === 'outlet_manager' && state.assignedOutlet) {
                         // OUTLET MANAGER: Load from outlet sales
                         const outlet = state.allOutlets[0];
-                        console.log('OUTLETS:', outlet);
                         if (!outlet || !outlet.createdBy) {
-                            console.error('❌ Outlet not loaded or missing parentAdminId');
+                            console.error('[DataLoader] loadSales: outlet not loaded or missing parentAdminId');
                             return;
                         }
-                        
+
                         const parentAdminId = outlet.createdBy;
                         const outletId = state.assignedOutlet;
-                        
-                        console.log('💰 Loading outlet sales from:', `users/${parentAdminId}/outlets/${outletId}/sales`);
-                        
+
                         const salesRef = collection(db, 'users', parentAdminId, 'outlets', outletId, 'outlet_sales');
-                        const snapshot = await getDocs(salesRef);
-                        
-                        snapshot.forEach(doc => {
-                            state.allSales.push({
-                                id: doc.id,
-                                ...doc.data()
-                            });
-                        });
-                        
-                        console.log('✓ Loaded outlet sales:', state.allSales.length);
-                        
+                        state.allSales = await fetchCollectionRows(salesRef, `outlet_sales:${outletId}`);
+
                     } else {
-                        // ADMIN: Load from main sales
-                        console.log('💰 Loading main sales from:', `users/${state.currentUser.uid}/sales`);
-                        
-                        const salesRef = collection(db, 'sales');
-                        const snapshot = await getDocs(salesRef);
-                        
-                        snapshot.forEach(doc => {
-                            state.allSales.push({
-                                id: doc.id,
-                                ...doc.data()
+                        // ADMIN: load sales based on selected outlet filter (main vs all vs specific outlet)
+                        const uid = state.currentUser.uid;
+                        const selectedFilter = state.selectedOutletFilter || 'main';
+                        const outlets = (state.allOutlets || []).filter(o => o && o.id);
+
+                        const shouldLoadMain = selectedFilter === 'main' || selectedFilter === 'all' || !selectedFilter;
+                        const outletIdsToLoad =
+                            selectedFilter === 'all'
+                                ? outlets.map(o => o.id)
+                                : (selectedFilter && selectedFilter !== 'main') ? [selectedFilter] : [];
+
+                        let mainRows = [];
+                        if (shouldLoadMain) {
+                            mainRows = await fetchCollectionRows(collection(db, 'sales'), 'sales');
+                        }
+
+                        let outletRows = [];
+                        if (outletIdsToLoad.length > 0) {
+                            // Fetch all outlet sales collections in parallel
+                            const outletSalesFetches = outletIdsToLoad.map(outletId => {
+                                const ref = collection(db, 'users', uid, 'outlets', outletId, 'outlet_sales');
+                                return fetchCollectionRows(ref, `outlet_sales:${outletId}`)
+                                    .then(rows => rows.map(r => ({
+                                        ...r,
+                                        outletId: r.outletId || outletId,
+                                        location: r.location || outletId
+                                    })));
                             });
-                        });
-                        
-                        console.log('✓ Loaded main sales:', state.allSales.length);
+                            const results = await Promise.all(outletSalesFetches);
+                            outletRows = results.flat();
+                        }
+
+                        state.allSales = mainRows.concat(outletRows);
                     }
-                    
+
                 } catch (error) {
-                    console.error('❌ Error loading sales:', error);
+                    console.error('[DataLoader] loadSales error:', error);
+                    state.loadErrors.sales = true;
+                    Utils.showToast('Failed to load sales — check your connection and refresh', 'error');
                 }
             }
 
@@ -158,32 +217,31 @@ class DataLoaderService {
                                 state.allExpenses.push({ ...doc.data(), id: doc.id });
                             });
                         } else if (selectedFilter === 'all') {
-                            // Load all expenses (main + all outlets)
-                            // Load main expenses
-                            const mainSnapshot = await getDocs(
-                                query(firebaseService.getUserCollection('expenses'), orderBy('date', 'desc'))
+                            // Load all expenses (main + all outlets) in parallel
+                            const mainQuery = query(firebaseService.getUserCollection('expenses'), orderBy('date', 'desc'));
+                            const outletQueries = state.allOutlets.map(outlet =>
+                                getDocs(query(
+                                    firebaseService.getOutletSubCollection(outlet.id, 'outlet_expenses'),
+                                    orderBy('date', 'desc')
+                                )).then(snap => ({ snap, outletId: outlet.id })).catch(() => null)
                             );
+
+                            const [mainSnapshot, ...outletResults] = await Promise.all([
+                                getDocs(mainQuery),
+                                ...outletQueries
+                            ]);
+
                             mainSnapshot.forEach(doc => {
                                 state.allExpenses.push({ ...doc.data(), id: doc.id, source: 'main' });
                             });
-                            
-                            // Load all outlet expenses
-                            for (const outlet of state.allOutlets) {
-                                try {
-                                    const outletSnapshot = await getDocs(
-                                        query(
-                                            firebaseService.getOutletSubCollection(outlet.id, 'outlet_expenses'),
-                                            orderBy('date', 'desc')
-                                        )
-                                    );
-                                    outletSnapshot.forEach(doc => {
-                                        state.allExpenses.push({ ...doc.data(), id: doc.id, source: outlet.id });
-                                    });
-                                } catch (err) {
-                                    console.log(`No expenses for outlet ${outlet.name}`);
-                                }
+
+                            for (const result of outletResults) {
+                                if (!result) continue; // outlet had no expenses subcollection
+                                result.snap.forEach(doc => {
+                                    state.allExpenses.push({ ...doc.data(), id: doc.id, source: result.outletId });
+                                });
                             }
-                            
+
                             // Sort by date
                             state.allExpenses.sort((a, b) => b.date.localeCompare(a.date));
                         } else {
@@ -286,27 +344,13 @@ class DataLoaderService {
                     
                     for (const outletDoc of snapshot.docs) {
                         const outletData = { ...outletDoc.data(), id: outletDoc.id };
-                        
 
-
-                        // Load outlet inventory - FIXED: use 'outlet_inventory' not 'inventory'
-                        const inventorySnapshot = await getDocs(
-                            collection(db, 'users', state.currentUser.uid, 'outlets', outletDoc.id, 'outlet_inventory')
-                        );
-                        let inventoryValue = 0;
-                        inventorySnapshot.forEach(doc => {
-                            const item = doc.data();
-                            inventoryValue += (item.quantity || 0) * (item.cost || 0);
-                        });
-                        outletData.inventoryValue = inventoryValue;
+                        // Inventory is stored under the admin who owns the outlet (createdBy), not always the signed-in uid
+                        const ownerUid = outletData.createdBy || state.currentUser.uid;
+                        outletData.inventoryValue = await computeOutletInventoryValue(db, ownerUid, outletDoc.id);
                         
                         state.allOutlets.push(outletData);
                     }
-                    console.log("Outlets loaded with inventory values:", state.allOutlets.map(o => ({
-                        name: o.name, 
-                        inventoryValue: o.inventoryValue
-                    })));
-                    
                     return state.allOutlets;
                 } catch (error) {
                     console.error('Load outlets error:', error);
@@ -426,189 +470,66 @@ class DataLoaderService {
             }
 
             async loadSingleOutlet(outletId) {
-                console.log('╔════════════════════════════════════════╗');
-                console.log('║   LOADING SINGLE OUTLET (ENHANCED)     ║');
-                console.log('╚════════════════════════════════════════╝');
-                
-                console.log('📋 Input Parameters:');
-                console.log('  Outlet ID:', outletId);
-                console.log('  Current User UID:', state.currentUser?.uid);
-                console.log('  Current User Email:', state.currentUser?.email);
-                
                 if (!state.currentUser || !state.currentUser.uid) {
-                    console.error('❌ FAILED: No current user');
+                    console.error('[DataLoader] loadSingleOutlet: no current user');
                     Utils.showToast('User session invalid. Please log in again.', 'error');
                     return;
                 }
-                
+
                 try {
-                    // ═══════════════════════════════════════
-                    // STEP 1: Load Outlet Manager Document
-                    // ═══════════════════════════════════════
-                    console.log('\n📄 STEP 1: Loading Outlet Manager Document');
-                    const managerPath = `users/${state.currentUser.uid}`;
-                    console.log('  Path:', managerPath);
-                    
+                    // Load outlet manager document to get parent admin reference
                     const userDocRef = doc(db, 'users', state.currentUser.uid);
                     const userDoc = await getDoc(userDocRef);
-                    
+
                     if (!userDoc.exists()) {
-                        console.error('❌ FAILED: Manager document not found');
-                        console.log('  Expected path:', managerPath);
+                        console.error('[DataLoader] loadSingleOutlet: manager document missing for uid', state.currentUser.uid);
                         Utils.showToast('Your user profile is missing. Please contact administrator.', 'error');
                         return;
                     }
-                    
-                    console.log('✅ Manager document found');
-                    
+
                     const userData = userDoc.data();
-                    console.log('  Manager Data:', JSON.stringify(userData, null, 2));
-                    
-                    // ═══════════════════════════════════════
-                    // STEP 2: Extract Parent Admin ID
-                    // ═══════════════════════════════════════
-                    console.log('\n🔑 STEP 2: Extracting Parent Admin ID');
                     const parentAdminId = userData.createdBy;
-                    
+
                     if (!parentAdminId) {
-                        console.error('❌ FAILED: No parent admin ID (createdBy field is missing)');
-                        console.log('  Manager Data:', userData);
-                        console.log('\n🔧 FIX REQUIRED:');
-                        console.log('  The outlet manager account is misconfigured.');
-                        console.log('  Admin needs to run the fixOutletManagerDocument() function.');
+                        console.error('[DataLoader] loadSingleOutlet: createdBy field missing — account misconfigured');
                         Utils.showToast('Account configuration error. Missing parent admin reference. Please contact administrator.', 'error');
                         return;
                     }
-                    
-                    console.log('✅ Parent Admin ID found:', parentAdminId);
-                    console.log('  Created By Email:', userData.createdByEmail);
-                    
-                    // ═══════════════════════════════════════
-                    // STEP 3: Load Outlet Document
-                    // ═══════════════════════════════════════
-                    console.log('\n🏪 STEP 3: Loading Outlet Document');
-                    const outletPath = `users/${parentAdminId}/outlets/${outletId}`;
-                    console.log('  Path:', outletPath);
-                    
+
+                    // Load outlet document
                     const outletDocRef = doc(db, 'users', parentAdminId, 'outlets', outletId);
                     const outletDoc = await getDoc(outletDocRef);
-                    
+
                     if (!outletDoc.exists()) {
-                        console.error('❌ FAILED: Outlet document not found');
-                        console.log('  Expected path:', outletPath);
-                        
-                        // Debug: List all outlets under this admin
-                        console.log('\n🔍 DEBUG: Checking what outlets exist...');
-                        try {
-                            const outletsRef = collection(db, 'users', parentAdminId, 'outlets');
-                            const outletsSnap = await getDocs(outletsRef);
-                            
-                            console.log(`  Found ${outletsSnap.size} outlet(s) under admin ${parentAdminId}:`);
-                            outletsSnap.forEach(doc => {
-                                console.log(`    - ID: ${doc.id}`);
-                                console.log(`      Name: ${doc.data().name}`);
-                            });
-                            
-                            if (outletsSnap.size === 0) {
-                                console.log('  ⚠️ No outlets found. Admin needs to create outlets first.');
-                            } else {
-                                console.log(`  ⚠️ Outlet ${outletId} does not exist under this admin.`);
-                                console.log('  ⚠️ The outlet may have been deleted or the ID is wrong.');
-                            }
-                        } catch (debugError) {
-                            console.error('  Debug query failed:', debugError);
-                        }
-                        
+                        console.error(`[DataLoader] loadSingleOutlet: outlet ${outletId} not found under admin ${parentAdminId}`);
                         Utils.showToast('Your assigned outlet was not found. Please contact administrator.', 'error');
                         return;
                     }
-                    
-                    console.log('✅ Outlet document found');
+
                     const outletData = { ...outletDoc.data(), id: outletDoc.id };
-                    console.log('  Outlet Name:', outletData.name);
-                    console.log('  Outlet Location:', outletData.location);
-                    
-                    // ═══════════════════════════════════════
-                    // STEP 4: Load Outlet Inventory
-                    // ═══════════════════════════════════════
-                    console.log('\n📦 STEP 4: Loading Outlet Inventory');
-                    const inventoryPath = `users/${parentAdminId}/outlets/${outletId}/outlet_inventory`;
-                    console.log('  Path:', inventoryPath);
-                    
+
+                    // Load outlet inventory value
                     const inventoryRef = collection(db, 'users', parentAdminId, 'outlets', outletId, 'outlet_inventory');
                     const inventorySnapshot = await getDocs(inventoryRef);
-                    
-                    console.log(`✅ Found ${inventorySnapshot.size} inventory item(s)`);
-                    
+
                     let inventoryValue = 0;
                     inventorySnapshot.forEach(doc => {
                         const item = doc.data();
-                        const itemValue = (item.quantity || 0) * (item.cost || 0);
-                        inventoryValue += itemValue;
-                        console.log(`  - ${item.name}: ${item.quantity} @ ${item.cost} = ${itemValue}`);
+                        inventoryValue += (item.quantity || 0) * (item.cost || 0);
                     });
-                    
-                    console.log('  Total Inventory Value:', inventoryValue);
-                    
-                    // ═══════════════════════════════════════
-                    // STEP 5: Load Consignments
-                    // ═══════════════════════════════════════
-                    console.log('\n🚚 STEP 5: Loading Consignments');
-                    const consignmentsPath = `users/${parentAdminId}/outlets/${outletId}/consignments`;
-                    console.log('  Path:', consignmentsPath);
-                    
+
+                    // Load consignments (count only — full data loaded on demand)
                     const consignmentsRef = collection(db, 'users', parentAdminId, 'outlets', outletId, 'consignments');
                     const consignmentsSnapshot = await getDocs(consignmentsRef);
-                    
-                    console.log(`✅ Found ${consignmentsSnapshot.size} consignment(s)`);
-                    
-                    consignmentsSnapshot.forEach(doc => {
-                        const consignment = doc.data();
-                        console.log(`  - Consignment ${doc.id}:`);
-                        console.log(`    Status: ${consignment.status}`);
-                        console.log(`    Date: ${consignment.date}`);
-                        console.log(`    Products: ${consignment.products?.length || 0}`);
-                    });
-                    
-                    // ═══════════════════════════════════════
-                    // STEP 6: Store Data in State
-                    // ═══════════════════════════════════════
-                    console.log('\n💾 STEP 6: Storing Data in Application State');
-                    
+
                     outletData.inventoryValue = inventoryValue;
                     outletData.createdBy = parentAdminId;
-                    
+
                     state.allOutlets = [outletData];
-                    
-                    console.log('✅ Data stored successfully');
-                    console.log('  state.allOutlets:', state.allOutlets.length);
-                    console.log('  Parent Admin ID:', outletData.parentAdminId);
-                    
-                    console.log('\n╔════════════════════════════════════════╗');
-                    console.log('║     ✅ OUTLET LOADED SUCCESSFULLY      ║');
-                    console.log('╚════════════════════════════════════════╝');
-                    
-                    console.log('Summary:');
-                    console.log('  Outlet:', outletData.name);
-                    console.log('  Manager:', state.currentUser.email);
-                    console.log('  Parent Admin:', parentAdminId);
-                    console.log('  Inventory Items:', inventorySnapshot.size);
-                    console.log('  Inventory Value:', inventoryValue);
-                    console.log('  Consignments:', consignmentsSnapshot.size);
-                    
+
                 } catch (error) {
-                    console.error('\n╔════════════════════════════════════════╗');
-                    console.error('║           ❌ ERROR OCCURRED            ║');
-                    console.error('╚════════════════════════════════════════╝');
-                    console.error('Error Name:', error.name);
-                    console.error('Error Code:', error.code);
-                    console.error('Error Message:', error.message);
-                    console.error('Error Stack:', error.stack);
-                    
+                    console.error('[DataLoader] loadSingleOutlet error:', error.code, error.message);
                     if (error.code === 'permission-denied') {
-                        console.error('\n🔒 PERMISSION DENIED');
-                        console.error('Firestore security rules are blocking access.');
-                        console.error('Check Firebase Console → Firestore → Rules');
                         Utils.showToast('Access denied. Please contact administrator to check permissions.', 'error');
                     } else {
                         Utils.showToast('Failed to load outlet: ' + error.message, 'error');
@@ -631,9 +552,9 @@ class DataLoaderService {
                         });
                     });
                     
-                    console.log('✓ Loaded suppliers:', state.allSuppliers.length);
                 } catch (error) {
-                    console.error('Error loading suppliers:', error);
+                    console.error('[DataLoader] loadSuppliers error:', error);
+                    state.loadErrors.suppliers = true;
                 }
             }
 
@@ -653,79 +574,66 @@ class DataLoaderService {
                         });
                     });
                     
-                    console.log('✓ Loaded purchase orders:', state.allPurchaseOrders.length);
                 } catch (error) {
-                    console.error('Error loading purchase orders:', error);
+                    console.error('[DataLoader] loadPurchaseOrders error:', error);
+                    state.loadErrors.purchaseOrders = true;
+                }
+            }
+
+            async loadLiabilityPayments() {
+                if (!state.currentUser) return;
+                try {
+                    state.allLiabilityPayments = [];
+                    const snap = await getDocs(
+                        query(
+                            collection(db, 'payment_transactions'),
+                            where('type', '==', 'liability_payment')
+                        )
+                    );
+                    snap.forEach((docSnap) => {
+                        state.allLiabilityPayments.push({ id: docSnap.id, ...docSnap.data() });
+                    });
+                    state.allLiabilityPayments.sort(
+                        (a, b) => (b.paymentDate || '').localeCompare(a.paymentDate || '')
+                    );
+                } catch (err) {
+                    console.error('Load liability payments error:', err);
                 }
             }
 
             async loadAll() {
-                console.log('╔════════════════════════════════════════╗');
-                console.log('║        LOADING ALL DATA (FIXED)        ║');
-                console.log('╚════════════════════════════════════════╝');
-                
                 if (!state.currentUser || !state.currentUser.uid) {
-                    console.error('❌ Cannot load data: No current user');
+                    console.error('[DataLoader] loadAll: no current user');
                     return;
                 }
-                
-                console.log('User:', state.currentUser.email);
-                console.log('Role:', state.userRole);
-                console.log('Assigned Outlet:', state.assignedOutlet);
-                
+
+                // Reset error flags before each load attempt so a successful retry clears them.
+                state.loadErrors = {};
+
                 Utils.showSpinner();
-                
+
                 try {
                     if (state.userRole === 'outlet_manager' && state.assignedOutlet) {
-                        // ═══════════════════════════════════════════════════
-                        // OUTLET MANAGER: Load outlet FIRST, then other data
-                        // ═══════════════════════════════════════════════════
-                        console.log('\n🏪 OUTLET MANAGER MODE');
-                        console.log('Assigned outlet:', state.assignedOutlet);
-                        
-                        // STEP 1: Load outlet FIRST (critical!)
-                        console.log('\n1️⃣ Loading outlet...');
+                        // Load outlet FIRST — products and sales depend on outlet.createdBy
                         await this.loadSingleOutlet(state.assignedOutlet);
-                        
-                        /*if (!outletLoaded) {
-                            console.error('❌ Failed to load outlet');
-                            Utils.showToast('Failed to load outlet data', 'error');
-                            return;
-                        }*/
-                        
-                        console.log('✅ Outlet loaded successfully');
-                        console.log('   Outlet:', state.allOutlets[0]?.name);
-                        console.log('   Parent Admin ID:', state.allOutlets[0]?.createdBy);
-                        
-                        // Verify outlet is in state
+
                         if (!state.allOutlets || state.allOutlets.length === 0) {
-                            console.error('❌ state.allOutlets is empty!');
                             Utils.showToast('Outlet data missing', 'error');
                             return;
                         }
-                        
-                        // STEP 2: Now load other data (outlet is available)
-                        console.log('\n2️⃣ Loading products, sales, customers, expenses...');
+
                         await Promise.all([
-                            this.loadProducts(),   // ✅ Now outlet is available!
-                            this.loadSales(),      // ✅ Now outlet is available!
+                            this.loadProducts(),
+                            this.loadSales(),
                             this.loadExpenses(),
                             this.loadCustomers(),
                             this.loadLiabilities(),
+                            this.loadLiabilityPayments(),
                             this.loadSuppliers(),
                             this.loadPurchaseOrders()
                         ]);
-                        
-                        console.log('✅ All outlet manager data loaded');
-                        console.log('   Products:', state.allProducts.length);
-                        console.log('   Sales:', state.allSales.length);
-                        
+
                     } else if (state.userRole === 'admin') {
-                        // ═══════════════════════════════════════════════════
-                        // ADMIN: Load all data in parallel
-                        // ═══════════════════════════════════════════════════
-                        console.log('\n👑 ADMIN MODE');
-                        
                         await Promise.all([
                             this.loadProducts(),
                             this.loadSales(),
@@ -733,36 +641,66 @@ class DataLoaderService {
                             this.loadCustomers(),
                             this.loadOutlets(),
                             this.loadLiabilities(),
+                            this.loadLiabilityPayments(),
                             this.loadSuppliers(),
                             this.loadPurchaseOrders()
                         ]);
-                        
-                        console.log('✅ All admin data loaded');
-                        console.log('   Products:', state.allProducts.length);
-                        console.log('   Sales:', state.allSales.length);
-                        console.log('   Outlets:', state.allOutlets.length);
-                        
+
                     } else {
-                        console.warn('⚠️ Unknown role or missing outlet assignment');
-                        console.log('Role:', state.userRole);
-                        console.log('Assigned Outlet:', state.assignedOutlet);
+                        console.warn('[DataLoader] loadAll: unknown role or missing outlet assignment', state.userRole);
                     }
-                    
-                    console.log('\n╔════════════════════════════════════════╗');
-                    console.log('║       ✅ DATA LOADING COMPLETE         ║');
-                    console.log('╚════════════════════════════════════════╝');
-                    
+
                 } catch (error) {
-                    console.error('\n❌ ERROR LOADING DATA:', error);
-                    console.error('Error code:', error.code);
-                    console.error('Error message:', error.message);
-                    console.error('Error stack:', error.stack);
+                    console.error('[DataLoader] loadAll error:', error.code, error.message);
                     Utils.showToast('Error loading data: ' + error.message, 'error');
                 } finally {
                     Utils.hideSpinner();
+                    this._showLoadErrorBannerIfNeeded();
                 }
+            }
+
+            /** Renders a dismissible top banner when critical data sections failed to load. */
+            _showLoadErrorBannerIfNeeded() {
+                const failed = Object.keys(state.loadErrors).filter(k => state.loadErrors[k]);
+                if (failed.length === 0) return;
+
+                // Remove any existing banner
+                document.getElementById('data-load-error-banner')?.remove();
+
+                const sectionNames = {
+                    products: 'Inventory',
+                    sales: 'Sales',
+                    suppliers: 'Suppliers',
+                    purchaseOrders: 'Purchase Orders',
+                };
+                const labels = failed.map(k => sectionNames[k] || k).join(', ');
+
+                const banner = document.createElement('div');
+                banner.id = 'data-load-error-banner';
+                banner.style.cssText = [
+                    'position:fixed', 'top:0', 'left:0', 'right:0', 'z-index:99999',
+                    'background:#dc3545', 'color:#fff',
+                    'padding:0.6rem 1rem', 'font-size:0.9rem',
+                    'display:flex', 'align-items:center', 'gap:0.75rem',
+                    'box-shadow:0 2px 8px rgba(0,0,0,0.25)'
+                ].join(';');
+
+                banner.innerHTML = `
+                    <i class="fas fa-exclamation-circle"></i>
+                    <span>Failed to load: <strong>${labels}</strong>. Data shown may be incomplete.</span>
+                    <button onclick="window.dataLoader?.loadAll().then(()=>document.getElementById('data-load-error-banner')?.remove())"
+                            style="margin-left:auto;background:rgba(255,255,255,0.2);border:1px solid rgba(255,255,255,0.5);color:#fff;padding:0.25rem 0.75rem;border-radius:6px;cursor:pointer;font-size:0.85rem;">
+                        <i class="fas fa-redo"></i> Retry
+                    </button>
+                    <button onclick="this.parentElement.remove()"
+                            style="background:transparent;border:none;color:#fff;font-size:1.1rem;cursor:pointer;padding:0 0.25rem;"
+                            title="Dismiss">&times;</button>
+                `;
+
+                document.body.prepend(banner);
             }
         }
 
 // Create and export singleton instance
 export const dataLoader = new DataLoaderService();
+window.dataLoader = dataLoader;

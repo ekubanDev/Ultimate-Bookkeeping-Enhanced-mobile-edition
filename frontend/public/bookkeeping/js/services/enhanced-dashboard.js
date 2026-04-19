@@ -3,6 +3,8 @@
  * Provides AI-powered insights, advanced visualizations, and comprehensive metrics
  */
 
+import { isDebtPayment, getSaleTotal } from '../utils/accounting.js';
+
 const BACKEND_URL = window.BACKEND_URL || '';
 
 export class EnhancedDashboard {
@@ -68,7 +70,15 @@ export class EnhancedDashboard {
         const currentSales = (this.state?.allSales || []).filter(s => s.date >= start && s.date <= end);
         const allCurrentExpenses = (this.state?.allExpenses || []).filter(e => e.date >= start && e.date <= end);
         const currentExpenses = allCurrentExpenses.filter(e => !this.isDebtPayment(e));
+        /** Legacy rows only (new repayments use payment_transactions, not expenses). */
         const currentDebtPayments = allCurrentExpenses.filter(e => this.isDebtPayment(e));
+        const liabilityPayInPeriod = (this.state?.allLiabilityPayments || []).filter(
+            (p) => (p.paymentDate || '') >= start && (p.paymentDate || '') <= end
+        );
+        const debtFromTransactions = liabilityPayInPeriod.reduce(
+            (sum, p) => sum + (parseFloat(p.amount) || 0),
+            0
+        );
 
         // Previous period data for comparison
         const prevSales = (this.state?.allSales || []).filter(s => s.date >= prevStart && s.date <= prevEnd);
@@ -81,7 +91,9 @@ export class EnhancedDashboard {
 
         // Expense calculations (operating expenses only, excludes debt payments)
         const expenses = currentExpenses.reduce((sum, e) => sum + (e.amount || 0), 0);
-        const debtPayments = currentDebtPayments.reduce((sum, e) => sum + (e.amount || 0), 0);
+        const debtPayments =
+            debtFromTransactions
+            + currentDebtPayments.reduce((sum, e) => sum + (e.amount || 0), 0);
         const prevExpensesTotal = prevExpenses.reduce((sum, e) => sum + (e.amount || 0), 0);
         const expenseChange = prevExpensesTotal > 0 ? ((expenses - prevExpensesTotal) / prevExpensesTotal * 100) : 0;
 
@@ -157,13 +169,7 @@ export class EnhancedDashboard {
         };
     }
 
-    isDebtPayment(expense) {
-        const type = (expense.expenseType || '').toLowerCase();
-        const cat = (expense.category || '').toLowerCase();
-        return type === 'liability_payment'
-            || cat === 'debt payment'
-            || cat === 'loan repayment';
-    }
+    isDebtPayment(expense) { return isDebtPayment(expense); }
 
     getThemeColor(varName) {
         const dashboard = document.getElementById('dashboard');
@@ -225,6 +231,10 @@ export class EnhancedDashboard {
      */
     buildDashboardHTML(metrics, period) {
         const currencySymbol = '₵';
+        const selectedOutlet = this.state?.selectedOutletFilter
+            || localStorage.getItem('adminOutletFilter')
+            || 'main';
+        const outlets = this.state?.allOutlets || [];
         
         return `
             <div class="dashboard-header">
@@ -237,6 +247,16 @@ export class EnhancedDashboard {
                         <option value="year" ${period === 'year' ? 'selected' : ''}>Last Year</option>
                         <option value="all" ${period === 'all' ? 'selected' : ''}>All Time</option>
                     </select>
+                    ${this.state?.userRole === 'admin' ? `
+                        <select id="outlet-filter-select"
+                                class="enhanced-filter"
+                                aria-label="Select outlet activity to examine"
+                                onchange="window.appController?.handleOutletFilterChange?.()">
+                            <option value="main" ${selectedOutlet === 'main' ? 'selected' : ''}>Main Office</option>
+                            <option value="all" ${selectedOutlet === 'all' ? 'selected' : ''}>All Outlets (Consolidated)</option>
+                            ${outlets.map(o => `<option value="${o.id}" ${selectedOutlet === o.id ? 'selected' : ''}>${this.escapeHtml(o.name)}</option>`).join('')}
+                        </select>
+                    ` : ''}
                     <div class="dashboard-theme-picker">
                         <button class="theme-picker-btn" onclick="window.enhancedDashboard?.toggleThemePicker()">
                             <i class="fas fa-palette"></i> Theme
@@ -478,12 +498,22 @@ export class EnhancedDashboard {
     buildActivityFeed() {
         const activities = [];
         
+        const sales = [...(this.state?.allSales || [])]
+            .sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0))
+            .slice(0, 10);
+
         // Add recent sales
-        (this.state?.allSales || []).slice(-10).forEach(s => {
+        sales.forEach(s => {
+            const loc = s.location || s.outletId || '';
+            const outletName =
+                !loc || loc === 'main'
+                    ? 'Main Shop'
+                    : ((this.state?.allOutlets || []).find(o => o.id === loc)?.name) || loc;
+
             activities.push({
                 type: 'sale',
                 text: `Sale to ${s.customer}`,
-                meta: s.product,
+                meta: `${s.product} • ${outletName}`,
                 amount: s.quantity * s.price,
                 date: s.date,
                 positive: true
@@ -491,7 +521,11 @@ export class EnhancedDashboard {
         });
 
         // Add recent expenses
-        (this.state?.allExpenses || []).slice(-5).forEach(e => {
+        const expenses = [...(this.state?.allExpenses || [])]
+            .sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0))
+            .slice(0, 5);
+
+        expenses.forEach(e => {
             activities.push({
                 type: 'expense',
                 text: e.description,
@@ -755,20 +789,35 @@ export class EnhancedDashboard {
         if (refreshBtn) refreshBtn.classList.add('loading');
         
         try {
+            const { start, end } = this.getDateRange(period);
+            const inPeriod = (dateVal) => {
+                const d = (dateVal || '').toString().slice(0, 10);
+                return d >= start && d <= end;
+            };
+            const salesForInsights = (this.state?.allSales || []).filter((s) => inPeriod(s.date));
+            const expensesForInsights = (this.state?.allExpenses || []).filter((e) => inPeriod(e.date));
+
             const response = await fetch(`${BACKEND_URL}/api/ai/insights`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    sales_data: this.state?.allSales || [],
-                    expenses_data: this.state?.allExpenses || [],
+                    sales_data: salesForInsights,
+                    expenses_data: expensesForInsights,
                     products_data: this.state?.allProducts || [],
                     period: period,
                     analysis_type: 'general'
                 })
             });
 
-            if (!response.ok) throw new Error('Failed to load insights');
-            
+            if (!response.ok) {
+                throw new Error(`Failed to load insights (status ${response.status})`);
+            }
+
+            const contentType = response.headers.get('content-type') || '';
+            if (!contentType.includes('application/json')) {
+                throw new Error('Backend did not return JSON for AI insights');
+            }
+
             const data = await response.json();
             this.aiInsights = data;
             
@@ -898,11 +947,7 @@ export class EnhancedDashboard {
     // ==================== UTILITY METHODS ====================
 
     calculateRevenue(sales) {
-        return sales.reduce((sum, s) => {
-            const subtotal = (s.quantity || 0) * (s.price || 0);
-            const discounted = subtotal * (1 - (s.discount || 0) / 100);
-            return sum + discounted * (1 + (s.tax || 0) / 100);
-        }, 0);
+        return sales.reduce((sum, s) => sum + getSaleTotal(s), 0);
     }
 
     calculateCOGS(sales) {
