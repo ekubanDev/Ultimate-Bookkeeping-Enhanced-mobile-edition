@@ -349,7 +349,16 @@ async def get_ai_insights(request: AIInsightsRequest):
         total_cogs = _insights_compute_cogs(request.sales_data, request.products_data)
         gross_profit = total_revenue - total_cogs
         total_products = len(request.products_data)
-        low_stock_count = sum(1 for p in request.products_data if p.get('quantity', 0) <= p.get('minStock', 10))
+        # Guard against string values from Firestore (e.g. "10" vs 10)
+        def _safe_float(v, default=0.0):
+            try:
+                return float(v) if v not in (None, '') else default
+            except (TypeError, ValueError):
+                return default
+        low_stock_count = sum(
+            1 for p in request.products_data
+            if _safe_float(p.get('quantity', 0)) <= _safe_float(p.get('minStock', 10), 10)
+        )
 
         def _is_debt_payment(exp):
             exp_type = (exp.get('expenseType', '') or '').lower()
@@ -359,8 +368,8 @@ async def get_ai_insights(request: AIInsightsRequest):
         operating_expenses = [e for e in request.expenses_data if not _is_debt_payment(e)]
         debt_payments = [e for e in request.expenses_data if _is_debt_payment(e)]
 
-        total_expenses = sum(float(e.get('amount', 0) or 0) for e in operating_expenses)
-        total_debt_payments = sum(float(e.get('amount', 0) or 0) for e in debt_payments)
+        total_expenses = sum(_safe_float(e.get('amount', 0)) for e in operating_expenses)
+        total_debt_payments = sum(_safe_float(e.get('amount', 0)) for e in debt_payments)
 
         product_sales = {}
         for sale in request.sales_data:
@@ -1442,7 +1451,10 @@ app.include_router(api_router)
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
-    allow_origins=os.environ.get('CORS_ORIGINS', '*').split(','),
+    allow_origins=os.environ.get(
+        'CORS_ORIGINS',
+        'https://bookkeeping-211e6.web.app,https://bookkeeping-211e6.firebaseapp.com'
+    ).split(','),
     allow_methods=["*"],
     allow_headers=["*"],
 )

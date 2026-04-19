@@ -121,6 +121,8 @@ class DataLoaderService {
 
                 } catch (error) {
                     console.error('[DataLoader] loadProducts error:', error);
+                    state.loadErrors.products = true;
+                    Utils.showToast('Failed to load inventory — check your connection and refresh', 'error');
                 }
             }
 
@@ -182,6 +184,8 @@ class DataLoaderService {
 
                 } catch (error) {
                     console.error('[DataLoader] loadSales error:', error);
+                    state.loadErrors.sales = true;
+                    Utils.showToast('Failed to load sales — check your connection and refresh', 'error');
                 }
             }
 
@@ -550,6 +554,7 @@ class DataLoaderService {
                     
                 } catch (error) {
                     console.error('[DataLoader] loadSuppliers error:', error);
+                    state.loadErrors.suppliers = true;
                 }
             }
 
@@ -571,6 +576,7 @@ class DataLoaderService {
                     
                 } catch (error) {
                     console.error('[DataLoader] loadPurchaseOrders error:', error);
+                    state.loadErrors.purchaseOrders = true;
                 }
             }
 
@@ -600,6 +606,9 @@ class DataLoaderService {
                     console.error('[DataLoader] loadAll: no current user');
                     return;
                 }
+
+                // Reset error flags before each load attempt so a successful retry clears them.
+                state.loadErrors = {};
 
                 Utils.showSpinner();
 
@@ -646,9 +655,52 @@ class DataLoaderService {
                     Utils.showToast('Error loading data: ' + error.message, 'error');
                 } finally {
                     Utils.hideSpinner();
+                    this._showLoadErrorBannerIfNeeded();
                 }
+            }
+
+            /** Renders a dismissible top banner when critical data sections failed to load. */
+            _showLoadErrorBannerIfNeeded() {
+                const failed = Object.keys(state.loadErrors).filter(k => state.loadErrors[k]);
+                if (failed.length === 0) return;
+
+                // Remove any existing banner
+                document.getElementById('data-load-error-banner')?.remove();
+
+                const sectionNames = {
+                    products: 'Inventory',
+                    sales: 'Sales',
+                    suppliers: 'Suppliers',
+                    purchaseOrders: 'Purchase Orders',
+                };
+                const labels = failed.map(k => sectionNames[k] || k).join(', ');
+
+                const banner = document.createElement('div');
+                banner.id = 'data-load-error-banner';
+                banner.style.cssText = [
+                    'position:fixed', 'top:0', 'left:0', 'right:0', 'z-index:99999',
+                    'background:#dc3545', 'color:#fff',
+                    'padding:0.6rem 1rem', 'font-size:0.9rem',
+                    'display:flex', 'align-items:center', 'gap:0.75rem',
+                    'box-shadow:0 2px 8px rgba(0,0,0,0.25)'
+                ].join(';');
+
+                banner.innerHTML = `
+                    <i class="fas fa-exclamation-circle"></i>
+                    <span>Failed to load: <strong>${labels}</strong>. Data shown may be incomplete.</span>
+                    <button onclick="window.dataLoader?.loadAll().then(()=>document.getElementById('data-load-error-banner')?.remove())"
+                            style="margin-left:auto;background:rgba(255,255,255,0.2);border:1px solid rgba(255,255,255,0.5);color:#fff;padding:0.25rem 0.75rem;border-radius:6px;cursor:pointer;font-size:0.85rem;">
+                        <i class="fas fa-redo"></i> Retry
+                    </button>
+                    <button onclick="this.parentElement.remove()"
+                            style="background:transparent;border:none;color:#fff;font-size:1.1rem;cursor:pointer;padding:0 0.25rem;"
+                            title="Dismiss">&times;</button>
+                `;
+
+                document.body.prepend(banner);
             }
         }
 
 // Create and export singleton instance
 export const dataLoader = new DataLoaderService();
+window.dataLoader = dataLoader;

@@ -44,6 +44,21 @@ import { EnhancedDashboard } from './services/enhanced-dashboard.js';
 import aiChatService from './services/ai-chat.js';
 import { metricsService } from './services/metrics-service.js';
 
+// ==================== PRODUCTION LOG SUPPRESSION ====================
+// Silence console.log and console.debug in production to prevent leaking
+// sensitive business data (sale totals, PO details, user IDs) via DevTools.
+// console.error and console.warn are preserved for critical runtime signals.
+(function suppressLogsInProduction() {
+    const isLocal = window.location.hostname === 'localhost'
+        || window.location.hostname === '127.0.0.1'
+        || window.location.hostname.startsWith('192.168.');
+    if (!isLocal) {
+        console.log   = () => {};
+        console.debug = () => {};
+        console.info  = () => {};
+    }
+})();
+
 // ==================== GLOBAL ERROR HANDLERS ====================
 window.addEventListener('error', (event) => {
     console.error('Global error:', event.error);

@@ -26,6 +26,10 @@ export class AppState {
         this.inventoryCurrentPage = 1;
         this.inventoryItemsPerPage = 10;
 
+        // Track which data sections failed to load so the UI can show error states
+        // rather than an empty table that looks like "no data".
+        this.loadErrors = {}; // e.g. { products: true, sales: true }
+
         // Multi-outlet/user management
         this.userRole = null; // 'admin' or 'outlet_manager'
         this.parentAdminId = null; 
@@ -73,6 +77,7 @@ export class AppState {
         this.managedUsers = [];
         
         this.dataReady = false;
+        this.loadErrors = {};
 
         // Destroy all chart instances
         Object.values(this.charts).forEach(chart => chart?.destroy());

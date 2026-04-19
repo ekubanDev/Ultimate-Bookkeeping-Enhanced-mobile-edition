@@ -266,23 +266,7 @@ class AppController {
                     exportCustomersBtn.addEventListener('click', () => this.exportCustomersCSV());
                 }
 
-                const exportSupplierPaymentsCsvBtn = document.getElementById('export-supplier-payments-csv-btn');
-                if (exportSupplierPaymentsCsvBtn) {
-                    exportSupplierPaymentsCsvBtn.addEventListener('click', () => {
-                        if (window.exportService) {
-                            window.exportService.exportSupplierPaymentsReport({ format: 'csv' });
-                        }
-                    });
-                }
-
-                const exportSupplierPaymentsPdfBtn = document.getElementById('export-supplier-payments-pdf-btn');
-                if (exportSupplierPaymentsPdfBtn) {
-                    exportSupplierPaymentsPdfBtn.addEventListener('click', () => {
-                        if (window.exportService) {
-                            window.exportService.exportSupplierPaymentsReport({ format: 'pdf' });
-                        }
-                    });
-                }
+                // Supplier payment exports are now per-row (appController.exportSupplierPayments)
 
                 // Invoice button
                 const invoiceBtn = document.getElementById('invoice-btn');
@@ -1632,16 +1616,14 @@ class AppController {
                         Utils.showToast('Outlet assignment is missing; contact your administrator.', 'warning');
                     }
 
-                    // Show outlet manager badge and context
+                    // Show outlet manager badge only (no outlet name in header)
                     if (roleDisplay) {
                         roleDisplay.innerHTML = `
-                            <span class="role-badge" style="background: #6f42c1;">Outlet Manager</span> 
-                            <span class="location-badge">${outlet?.name || 'Unassigned Outlet'}</span>
+                            <span class="role-badge" style="background: #6f42c1;">Outlet Manager</span>
                         `;
                     }
                     if (outletContextEl) {
-                        outletContextEl.textContent = `Viewing: ${outlet?.name || 'Unassigned outlet'}`;
-                        outletContextEl.style.display = 'block';
+                        outletContextEl.style.display = 'none';
                     }
                     
                     // Hide admin-only sections from nav for outlet managers
@@ -3085,9 +3067,9 @@ class AppController {
                             tax: tax,
                             isBulkPurchase: true,
                             createdAt: new Date().toISOString(),
-                            createdBy: state.currentUser.email
+                            createdBy: state.currentUser.uid
                         };
-                        
+
                         // ⭐ Add sale to correct location
                         const saleRef = doc(paths.sales);
                         batch.set(saleRef, saleData);
@@ -3258,13 +3240,11 @@ class AppController {
                         location: location,
                         locationName: location === 'main' ? 'Main Shop' : state.allOutlets.find(o => o.id === location)?.name,
                         createdAt: new Date().toISOString(),
-                        createdBy: state.currentUser.email
+                        createdBy: state.currentUser.uid
                     };
-                    
-                    console.log('Sale data:', saleData);
-                    
+
                     const batch = writeBatch(db);
-                    
+
                     // Add sale
                     const saleRef = doc(salesCollection);
                     batch.set(saleRef, saleData);
@@ -5262,12 +5242,28 @@ class AppController {
                         <td>${this.formatPaymentTerms(supplier.paymentTerms)}</td>
                         <td>${Utils.formatCurrency(owed)}</td>
                         <td><span class="badge badge-${supplier.status}">${supplier.status}</span></td>
-                        <td>
-                            <button onclick="appController.editSupplier('${supplier.id}')" class="btn-sm" style="padding: 0.25rem 0.5rem; font-size: 0.85rem;">✏️ Edit</button>
+                        <td style="white-space:nowrap;">
+                            <button onclick="appController.editSupplier('${supplier.id}')" class="btn-sm" style="padding:0.25rem 0.5rem;font-size:0.85rem;" title="Edit supplier">✏️ Edit</button>
+                            <button onclick="appController.exportSupplierPayments('${supplier.id}','${(supplier.name || '').replace(/'/g, "\\'")}')" class="btn-sm" style="padding:0.25rem 0.5rem;font-size:0.85rem;background:#dc3545;color:#fff;border:none;border-radius:4px;cursor:pointer;" title="Export payment history PDF">
+                                <i class="fas fa-file-pdf"></i>
+                            </button>
                         </td>
                     </tr>
                 `;
                 }).join('');
+            }
+
+            exportSupplierPayments(supplierId, supplierName) {
+                if (!window.exportService) {
+                    Utils.showToast('Export service not available', 'error');
+                    return;
+                }
+                Utils.showToast(`Generating payment report for ${supplierName}…`, 'info');
+                window.exportService.exportSupplierPaymentsReport({ supplierId, format: 'pdf' })
+                    .catch(err => {
+                        console.error('Supplier payment export failed:', err);
+                        Utils.showToast('Export failed: ' + err.message, 'error');
+                    });
             }
 
             editSupplier(supplierId) {
@@ -9972,10 +9968,138 @@ class AppController {
             async viewOutletDetails(outletId) {
                 const outlet = state.allOutlets.find(o => o.id === outletId);
                 if (!outlet) return;
-                
-                // Navigate to a detailed view or show modal
-                Utils.showToast('Outlet details view - to be implemented', 'info');
-                // You can create a detailed modal or navigate to a dashboard filtered for this outlet
+
+                // Derive outlet-specific KPIs from in-memory state
+                const outletSales = state.allSales.filter(s =>
+                    s.outletId === outletId || s.location === outletId
+                );
+                const outletExpenses = state.allExpenses.filter(e =>
+                    e.source === outletId || e.outletId === outletId
+                );
+                const outletConsignments = [];
+                try {
+                    const ownerUid = outlet.createdBy || state.currentUser.uid;
+                    const snap = await getDocs(
+                        collection(db, 'users', ownerUid, 'outlets', outletId, 'consignments')
+                    );
+                    snap.forEach(d => outletConsignments.push({ id: d.id, ...d.data() }));
+                } catch (_) {}
+
+                const totalRevenue = outletSales.reduce((sum, s) => {
+                    const qty = parseFloat(s.quantity) || 0;
+                    const price = parseFloat(s.price) || 0;
+                    return sum + qty * price;
+                }, 0);
+                const totalExpenses = outletExpenses.reduce((sum, e) =>
+                    sum + (parseFloat(e.amount) || 0), 0
+                );
+                const pendingConsignments = outletConsignments.filter(c => c.status === 'pending').length;
+                const confirmedConsignments = outletConsignments.filter(c => c.status === 'confirmed').length;
+
+                const statusColor = outlet.status === 'active' ? '#28a745' : '#dc3545';
+                const statusBg = outlet.status === 'active' ? '#d4edda' : '#f8d7da';
+
+                // Remove any existing detail modal
+                document.getElementById('outlet-detail-modal')?.remove();
+
+                const modal = document.createElement('div');
+                modal.id = 'outlet-detail-modal';
+                modal.className = 'modal';
+                modal.style.display = 'block';
+                modal.innerHTML = `
+                    <div class="modal-content" style="max-width:600px;">
+                        <span class="close" onclick="document.getElementById('outlet-detail-modal').remove()">&times;</span>
+
+                        <div style="display:flex;align-items:center;gap:0.75rem;margin-bottom:1.25rem;">
+                            <div style="width:48px;height:48px;border-radius:50%;background:linear-gradient(135deg,#1E3A8A,#3B82F6);display:flex;align-items:center;justify-content:center;color:#fff;font-size:1.3rem;">
+                                <i class="fas fa-store"></i>
+                            </div>
+                            <div>
+                                <h2 style="margin:0;font-size:1.25rem;">${(outlet.name || '').replace(/</g,'&lt;')}</h2>
+                                <span style="background:${statusBg};color:${statusColor};padding:0.2rem 0.65rem;border-radius:12px;font-size:0.78rem;font-weight:600;">${(outlet.status || 'unknown').toUpperCase()}</span>
+                            </div>
+                        </div>
+
+                        <!-- KPI row -->
+                        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:0.75rem;margin-bottom:1.25rem;">
+                            <div style="background:#f8f9fa;border-radius:8px;padding:0.85rem;text-align:center;">
+                                <div style="font-size:0.75rem;color:#666;">Inventory Value</div>
+                                <div style="font-size:1.1rem;font-weight:700;color:#1E3A8A;">${Utils.formatCurrency(outlet.inventoryValue || 0)}</div>
+                            </div>
+                            <div style="background:#f8f9fa;border-radius:8px;padding:0.85rem;text-align:center;">
+                                <div style="font-size:0.75rem;color:#666;">Total Revenue</div>
+                                <div style="font-size:1.1rem;font-weight:700;color:#28a745;">${Utils.formatCurrency(totalRevenue)}</div>
+                            </div>
+                            <div style="background:#f8f9fa;border-radius:8px;padding:0.85rem;text-align:center;">
+                                <div style="font-size:0.75rem;color:#666;">Total Expenses</div>
+                                <div style="font-size:1.1rem;font-weight:700;color:#dc3545;">${Utils.formatCurrency(totalExpenses)}</div>
+                            </div>
+                            <div style="background:#f8f9fa;border-radius:8px;padding:0.85rem;text-align:center;">
+                                <div style="font-size:0.75rem;color:#666;">Sales Records</div>
+                                <div style="font-size:1.1rem;font-weight:700;color:#6f42c1;">${outletSales.length}</div>
+                            </div>
+                        </div>
+
+                        <!-- Outlet details -->
+                        <div style="background:#f8f9fa;border-radius:8px;padding:1rem;margin-bottom:1rem;">
+                            <h4 style="margin:0 0 0.75rem;font-size:0.95rem;color:#333;"><i class="fas fa-info-circle"></i> Outlet Information</h4>
+                            <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.5rem;font-size:0.9rem;">
+                                <div><span style="color:#666;">Location:</span> <strong>${(outlet.location || '—').replace(/</g,'&lt;')}</strong></div>
+                                <div><span style="color:#666;">Manager:</span> <strong>${(outlet.manager || '—').replace(/</g,'&lt;')}</strong></div>
+                                <div><span style="color:#666;">Phone:</span> <strong>${(outlet.phone || '—').replace(/</g,'&lt;')}</strong></div>
+                                <div><span style="color:#666;">Commission:</span> <strong>${outlet.commissionRate || 0}%</strong></div>
+                            </div>
+                        </div>
+
+                        <!-- Consignment summary -->
+                        <div style="background:#f8f9fa;border-radius:8px;padding:1rem;margin-bottom:1rem;">
+                            <h4 style="margin:0 0 0.75rem;font-size:0.95rem;color:#333;"><i class="fas fa-truck"></i> Consignments</h4>
+                            <div style="display:flex;gap:1rem;font-size:0.9rem;flex-wrap:wrap;">
+                                <div><span style="color:#666;">Total:</span> <strong>${outletConsignments.length}</strong></div>
+                                <div><span style="color:#ffc107;">⏳ Pending:</span> <strong>${pendingConsignments}</strong></div>
+                                <div><span style="color:#28a745;">✅ Confirmed:</span> <strong>${confirmedConsignments}</strong></div>
+                            </div>
+                        </div>
+
+                        <!-- Recent sales -->
+                        ${outletSales.length > 0 ? `
+                        <div style="background:#f8f9fa;border-radius:8px;padding:1rem;">
+                            <h4 style="margin:0 0 0.75rem;font-size:0.95rem;color:#333;"><i class="fas fa-receipt"></i> Recent Sales</h4>
+                            <div style="max-height:180px;overflow-y:auto;">
+                                <table style="width:100%;border-collapse:collapse;font-size:0.85rem;">
+                                    <thead><tr style="background:#e9ecef;">
+                                        <th style="padding:0.4rem 0.5rem;text-align:left;">Date</th>
+                                        <th style="padding:0.4rem 0.5rem;text-align:left;">Product</th>
+                                        <th style="padding:0.4rem 0.5rem;text-align:right;">Amount</th>
+                                    </tr></thead>
+                                    <tbody>
+                                        ${outletSales.slice(-10).reverse().map(s => `
+                                            <tr style="border-bottom:1px solid #dee2e6;">
+                                                <td style="padding:0.4rem 0.5rem;">${s.date || '—'}</td>
+                                                <td style="padding:0.4rem 0.5rem;">${(s.product || '—').replace(/</g,'&lt;')}</td>
+                                                <td style="padding:0.4rem 0.5rem;text-align:right;">${Utils.formatCurrency((parseFloat(s.quantity)||0)*(parseFloat(s.price)||0))}</td>
+                                            </tr>
+                                        `).join('')}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>` : ''}
+
+                        <div style="display:flex;justify-content:flex-end;gap:0.75rem;margin-top:1.25rem;flex-wrap:wrap;">
+                            <button onclick="window.appController?.editOutlet('${outlet.id}');document.getElementById('outlet-detail-modal').remove();"
+                                    style="background:#1E3A8A;color:#fff;border:none;padding:0.55rem 1.1rem;border-radius:8px;cursor:pointer;font-weight:600;">
+                                <i class="fas fa-edit"></i> Edit Outlet
+                            </button>
+                            <button onclick="document.getElementById('outlet-detail-modal').remove()"
+                                    style="background:#6c757d;color:#fff;border:none;padding:0.55rem 1.1rem;border-radius:8px;cursor:pointer;">
+                                Close
+                            </button>
+                        </div>
+                    </div>
+                `;
+
+                modal.addEventListener('click', e => { if (e.target === modal) modal.remove(); });
+                document.body.appendChild(modal);
             }
 
             renderOutlets() {
@@ -10375,11 +10499,11 @@ class AppController {
                         notes: notes,
                         status: 'pending',
                         createdAt: new Date().toISOString(),
-                        createdBy: state.currentUser.email
+                        createdBy: state.currentUser.uid
                     };
-                    
+
                     const batch = writeBatch(db);
-                    
+
                     // Add consignment to outlet's consignments subcollection
                     const consignmentRef = doc(collection(db, 'users', state.currentUser.uid, 'outlets', outletId, 'consignments'));
                     batch.set(consignmentRef, consignmentData);
@@ -10757,10 +10881,31 @@ class AppController {
                 Utils.showSpinner();
                 
                 try {
+                    // Wire up filter controls (idempotent — only binds once)
+                    const _bindFilters = () => {
+                        const search = document.getElementById('consignment-search');
+                        const outletSel = document.getElementById('consignment-outlet-filter');
+                        const statusSel = document.getElementById('consignment-status-filter');
+                        if (search && !search._bound) {
+                            search._bound = true;
+                            search.addEventListener('input', Utils.debounce(() => this.renderConsignments(), 300));
+                        }
+                        if (outletSel && !outletSel._bound) {
+                            outletSel._bound = true;
+                            outletSel.addEventListener('change', () => this.renderConsignments());
+                        }
+                        if (statusSel && !statusSel._bound) {
+                            statusSel._bound = true;
+                            statusSel.addEventListener('change', () => this.renderConsignments());
+                        }
+                    };
+                    _bindFilters();
+
                     // Get filters
                     const outletFilter = document.getElementById('consignment-outlet-filter')?.value || '';
                     const statusFilter = document.getElementById('consignment-status-filter')?.value || '';
-                    
+                    const searchQuery = (document.getElementById('consignment-search')?.value || '').toLowerCase().trim();
+
                     // Load all consignments
                     const allConsignments = [];
                     
@@ -10839,12 +10984,20 @@ class AppController {
                     if (outletFilter) {
                         filtered = filtered.filter(c => c.outletId === outletFilter);
                     }
-                    
+
                     if (statusFilter) {
                         filtered = filtered.filter(c => c.status === statusFilter);
                     }
-                    
-                    console.log('Filtered consignments:', filtered.length);
+
+                    if (searchQuery) {
+                        filtered = filtered.filter(c => {
+                            const outletMatch = (c.outletName || '').toLowerCase().includes(searchQuery);
+                            const productMatch = (c.products || []).some(p =>
+                                (p.name || '').toLowerCase().includes(searchQuery)
+                            );
+                            return outletMatch || productMatch;
+                        });
+                    }
                     
                     if (filtered.length === 0) {
                         listContainer.innerHTML = '<div class="no-data">No consignments found. Send a consignment to get started.</div>';
@@ -10930,21 +11083,19 @@ class AppController {
                         listContainer.innerHTML = consignmentsHTML;
                     }
                     
-                    // Populate outlet filter based on role
+                    // Populate/refresh outlet filter
                     const outletFilterSelect = document.getElementById('consignment-outlet-filter');
+                    const filterCard = document.getElementById('consignment-filter-card');
                     if (outletFilterSelect) {
                         if (state.userRole === 'outlet_manager' && state.assignedOutlet) {
-                            // Hide filter for outlet managers
-                            const filterContainer = outletFilterSelect.closest('.filters');
-                            if (filterContainer) {
-                                const outletFilterDiv = outletFilterSelect.parentElement;
-                                if (outletFilterDiv) outletFilterDiv.style.display = 'none';
-                            }
-                        } else if (outletFilterSelect.options.length <= 1) {
-                            // Populate for admins
+                            // Outlet managers see no filter card
+                            if (filterCard) filterCard.style.display = 'none';
+                        } else {
+                            // Always repopulate so new outlets appear; preserve current selection
+                            const prevVal = outletFilterSelect.value;
                             outletFilterSelect.innerHTML = '<option value="">All Outlets</option>' +
-                                state.allOutlets.map(outlet => 
-                                    `<option value="${outlet.id}">${outlet.name}</option>`
+                                state.allOutlets.map(o =>
+                                    `<option value="${o.id}"${o.id === prevVal ? ' selected' : ''}>${o.name}</option>`
                                 ).join('');
                         }
                     }
@@ -12936,14 +13087,6 @@ class AppController {
                                 </div>
                             </div>
 
-                            <div style="margin: 0.5rem 0 1rem 0; display: flex; gap: 0.5rem; flex-wrap: wrap;">
-                                <button id="export-supplier-payments-csv-btn" class="btn" style="background: #28a745;">
-                                    <i class="fas fa-file-csv"></i> Export Supplier Payments (CSV)
-                                </button>
-                                <button id="export-supplier-payments-pdf-btn" class="btn" style="background: #dc3545;">
-                                    <i class="fas fa-file-pdf"></i> Export Supplier Payments (PDF)
-                                </button>
-                            </div>
                             
                             <div class="filters" style="display: flex; gap: 1rem; margin: 1rem 0; flex-wrap: wrap;">
                                 <select id="supplier-status-filter" style="padding: 0.5rem;">
@@ -13345,8 +13488,13 @@ class AppController {
                         </div>
 
                         <div class="card">
-                            <h3><i class="fas fa-exclamation-triangle"></i> Inventory Alerts</h3>
-                            <div id="inventory-alerts"></div>
+                            <div style="display:flex;justify-content:space-between;align-items:center;cursor:pointer;user-select:none;" id="inventory-alerts-header" onclick="(function(){const b=document.getElementById('inventory-alerts-body');const i=document.getElementById('inventory-alerts-chevron');const open=b.style.display!=='none';b.style.display=open?'none':'block';i.style.transform=open?'rotate(-90deg)':'rotate(0deg)';})()" >
+                                <h3 style="margin:0;"><i class="fas fa-exclamation-triangle"></i> Inventory Alerts</h3>
+                                <i id="inventory-alerts-chevron" class="fas fa-chevron-down" style="transition:transform 0.2s;color:#666;"></i>
+                            </div>
+                            <div id="inventory-alerts-body">
+                                <div id="inventory-alerts" style="margin-top:0.75rem;"></div>
+                            </div>
                         </div>
                     </section>
                 `;
@@ -13458,17 +13606,21 @@ class AppController {
                             <button id="send-consignment-btn" class="mb-2"><i class="fas fa-paper-plane"></i> Send Consignment</button>
                         </div>
                         
-                        <div class="card">
-                            <h3><i class="fas fa-filter"></i> Filter</h3>
-                            <div class="filters">
-                                <select id="consignment-outlet-filter">
+                        <div class="card" id="consignment-filter-card">
+                            <h3 style="margin-bottom:0.75rem;"><i class="fas fa-filter"></i> Filter &amp; Search</h3>
+                            <div class="filters" style="display:flex;flex-wrap:wrap;gap:0.5rem;align-items:center;">
+                                <input type="text" id="consignment-search" placeholder="🔍 Search outlet or product..." style="flex:1;min-width:180px;padding:0.45rem 0.75rem;border:1px solid #ddd;border-radius:6px;font-size:0.9rem;">
+                                <select id="consignment-outlet-filter" style="padding:0.45rem 0.75rem;border:1px solid #ddd;border-radius:6px;font-size:0.9rem;">
                                     <option value="">All Outlets</option>
                                 </select>
-                                <select id="consignment-status-filter">
+                                <select id="consignment-status-filter" style="padding:0.45rem 0.75rem;border:1px solid #ddd;border-radius:6px;font-size:0.9rem;">
                                     <option value="">All Status</option>
                                     <option value="pending">Pending</option>
                                     <option value="confirmed">Confirmed</option>
                                 </select>
+                                <button onclick="document.getElementById('consignment-search').value='';document.getElementById('consignment-outlet-filter').value='';document.getElementById('consignment-status-filter').value='';window.appController?.renderConsignments();" style="padding:0.45rem 0.75rem;background:#6c757d;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:0.85rem;white-space:nowrap;">
+                                    <i class="fas fa-times"></i> Clear
+                                </button>
                             </div>
                         </div>
                         
