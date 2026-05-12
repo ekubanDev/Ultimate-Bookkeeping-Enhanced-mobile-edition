@@ -326,12 +326,25 @@ class AppController {
                 const addProductBtn = document.getElementById('add-product-btn');
                 if (addProductBtn) {
                     addProductBtn.addEventListener('click', () => {
-                        // Clear barcode preview
                         const barcodeInput = document.getElementById('product-barcode-input');
                         const previewCanvas = document.getElementById('preview-barcode');
                         if (barcodeInput) barcodeInput.value = '';
                         if (previewCanvas) previewCanvas.style.display = 'none';
-                        
+
+                        const ctxBanner = document.getElementById('product-outlet-context');
+                        const ctxName   = document.getElementById('product-outlet-context-name');
+                        const outletFilter = state.selectedOutletFilter;
+                        const isSpecific = outletFilter && outletFilter !== 'main' && outletFilter !== 'all';
+                        if (ctxBanner && ctxName) {
+                            if (isSpecific && state.userRole === 'admin') {
+                                const outlet = state.allOutlets.find(o => o.id === outletFilter);
+                                ctxName.textContent = outlet ? outlet.name : outletFilter;
+                                ctxBanner.style.display = 'block';
+                            } else {
+                                ctxBanner.style.display = 'none';
+                            }
+                        }
+
                         document.getElementById('add-product-modal').style.display = 'block';
                     });
                 }
@@ -888,15 +901,25 @@ class AppController {
                         if (state.userRole === 'admin' && state.allOutlets.length > 0) {
                             const locationContainer = document.getElementById('sale-location-container');
                             const locationSelect = document.getElementById('sale-location');
-                            
+
                             if (locationContainer && locationSelect) {
                                 locationContainer.style.display = 'block';
-                                
                                 locationSelect.innerHTML = '<option value="main">Main Shop</option>' +
                                     state.allOutlets
                                         .filter(o => o.status === 'active')
                                         .map(outlet => `<option value="${outlet.id}">${outlet.name}</option>`)
                                         .join('');
+
+                                const outletFilter = state.selectedOutletFilter;
+                                const isSpecific = outletFilter && outletFilter !== 'main' && outletFilter !== 'all';
+                                if (isSpecific) {
+                                    locationSelect.value = outletFilter;
+                                    locationSelect.disabled = true;
+                                    locationSelect.title = 'Locked to active outlet context';
+                                } else {
+                                    locationSelect.disabled = false;
+                                    locationSelect.title = '';
+                                }
                             }
                         }
                         document.getElementById('sale-product-search').value = '';
@@ -938,18 +961,32 @@ class AppController {
                 if (addExpenseBtn) {
                     addExpenseBtn.addEventListener('click', () => {
                         document.getElementById('expense-date').valueAsDate = new Date();
-                        
+
                         // Show/hide outlet selector based on role
                         const outletSelector = document.getElementById('expense-outlet-selector');
                         if (outletSelector) {
                             if (state.userRole === 'admin') {
                                 outletSelector.style.display = 'block';
                                 this.populateExpenseOutletSelector();
+
+                                const expenseOutletSel = document.getElementById('expense-outlet');
+                                const outletFilter = state.selectedOutletFilter;
+                                const isSpecific = outletFilter && outletFilter !== 'main' && outletFilter !== 'all';
+                                if (expenseOutletSel) {
+                                    if (isSpecific) {
+                                        expenseOutletSel.value = outletFilter;
+                                        expenseOutletSel.disabled = true;
+                                        expenseOutletSel.title = 'Locked to active outlet context';
+                                    } else {
+                                        expenseOutletSel.disabled = false;
+                                        expenseOutletSel.title = '';
+                                    }
+                                }
                             } else {
                                 outletSelector.style.display = 'none';
                             }
                         }
-                        
+
                         document.getElementById('add-expense-modal').style.display = 'block';
                     });
                 }
@@ -1277,11 +1314,10 @@ class AppController {
                         this.markSectionsDirty(['dashboard', 'sales', 'inventory', 'expenses', 'analytics', 'customers']);
                         
                         document.getElementById('login-modal').style.display = 'none';
-                        document.getElementById('user-email').textContent = `Signed in as: ${user.email}`;
-                        document.getElementById('user-email').style.display = 'inline';
                         document.getElementById('logout-btn').style.display = 'inline';
-                        document.getElementById('connection-status').textContent = 'Connected';
-                        
+                        const cs = document.getElementById('connection-status');
+                        cs.className = 'conn-badge conn-online'; cs.title = 'Connected';
+
                         await firebaseService.ensureUserData();
 
                         // Load user role
@@ -1341,7 +1377,6 @@ class AppController {
                         this._sectionDirty = {};
                         this._currentSection = null;
                         
-                        document.getElementById('user-email').style.display = 'none';
                         document.getElementById('logout-btn').style.display = 'none';
                         document.getElementById('login-modal').style.display = 'flex';
                         
@@ -1352,14 +1387,14 @@ class AppController {
 
                 // Monitor network status
                 window.addEventListener('online', () => {
-                    document.getElementById('connection-status').textContent = 'Connected';
-                    document.getElementById('connection-status').style.color = '#28a745';
+                    const cs = document.getElementById('connection-status');
+                    cs.className = 'conn-badge conn-online'; cs.title = 'Connected';
                     Utils.showToast('Connection restored', 'success');
                 });
 
                 window.addEventListener('offline', () => {
-                    document.getElementById('connection-status').textContent = 'Offline (Changes will sync when online)';
-                    document.getElementById('connection-status').style.color = '#ffc107';
+                    const cs = document.getElementById('connection-status');
+                    cs.className = 'conn-badge conn-offline'; cs.title = 'Offline — changes will sync when online';
                     Utils.showToast('You are offline', 'warning');
                 });
             }
@@ -2197,7 +2232,7 @@ class AppController {
 
                 try {
                     if (window.formValidator) {
-                        const validation = window.formValidator.validateProduct({
+                        const validation = window.formValidator.validateProductForm({
                             name: document.getElementById('product-name')?.value,
                             price: document.getElementById('product-price')?.value,
                             cost: document.getElementById('product-cost')?.value,
@@ -2227,7 +2262,9 @@ class AppController {
                     const guard = validateProductWrite(productData);
                     if (!guard.ok) { Utils.showToast(guard.error, 'error'); return; }
 
-                    await addDoc(firebaseService.getUserCollection('inventory'), productData);
+                    const paths = this.getDataPaths();
+                    const inventoryCol = paths ? paths.inventory : firebaseService.getUserCollection('inventory');
+                    await addDoc(inventoryCol, productData);
                     await ActivityLogger.log('Product Added', `Added product: ${productData.name}`);
                     
                     Utils.showToast('Product added successfully', 'success');
@@ -2955,32 +2992,48 @@ class AppController {
             getDataPaths() {
                 if (state.userRole === 'outlet_manager' && state.assignedOutlet) {
                     const outlet = state.allOutlets[0];
-                    
                     if (!outlet || !outlet.createdBy) {
                         console.error('❌ Cannot get paths: outlet not loaded or missing parentAdminId');
                         return null;
                     }
-                    
                     const parentAdminId = outlet.createdBy;
                     const outletId = state.assignedOutlet;
-                    
                     return {
                         userId: parentAdminId,
-                        outletId: outletId,
+                        outletId,
                         inventory: collection(db, 'users', parentAdminId, 'outlets', outletId, 'outlet_inventory'),
                         sales: collection(db, 'users', parentAdminId, 'outlets', outletId, 'outlet_sales'),
                         isOutletManager: true
                     };
-                } else {
-                    // Admin
+                }
+
+                const uid = state.currentUser.uid;
+                const outletFilter = state.selectedOutletFilter;
+                const isSpecificOutlet = outletFilter && outletFilter !== 'main' && outletFilter !== 'all';
+
+                if (isSpecificOutlet) {
+                    // Admin operating inside a specific outlet context
                     return {
-                        userId: state.currentUser.uid,
-                        outletId: null,
-                        inventory: collection(db, 'inventory'),
-                        sales: collection(db, 'sales'),
-                        isOutletManager: false
+                        userId: uid,
+                        outletId: outletFilter,
+                        inventory: collection(db, 'users', uid, 'outlets', outletFilter, 'outlet_inventory'),
+                        sales: collection(db, 'users', uid, 'outlets', outletFilter, 'outlet_sales'),
+                        expenses: collection(db, 'users', uid, 'outlets', outletFilter, 'outlet_expenses'),
+                        isOutletManager: false,
+                        isAdminOutletContext: true
                     };
                 }
+
+                // Admin on main / all — root collections
+                return {
+                    userId: uid,
+                    outletId: null,
+                    inventory: collection(db, 'inventory'),
+                    sales: collection(db, 'sales'),
+                    expenses: collection(db, 'users', uid, 'expenses'),
+                    isOutletManager: false,
+                    isAdminOutletContext: false
+                };
             }
             
             async handleBulkSale(e) {
@@ -3395,7 +3448,7 @@ class AppController {
                 if (!await UX.confirm({ title: 'Delete Sale', body: 'This will restore the product quantity to inventory.', confirmLabel: 'Delete', variant: 'danger' })) return;
 
                 Utils.showSpinner();
-                
+
                 try {
                     const sale = state.allSales.find(s => s.id === saleId);
                     if (!sale) {
@@ -3403,38 +3456,38 @@ class AppController {
                         Utils.hideSpinner();
                         return;
                     }
-                    
-                    // ⭐ Get correct paths based on user role
-                    const paths = this.getDataPaths();
-                    if (!paths) {
-                        Utils.showToast('Configuration error: Cannot determine data paths', 'error');
-                        Utils.hideSpinner();
-                        return;
+
+                    const uid = state.currentUser.uid;
+                    const outletId = sale.location && sale.location !== 'main' ? sale.location : null;
+
+                    // Resolve the correct collection paths from the sale's own location field,
+                    // not from the active filter — the filter may be 'all' while the sale
+                    // belongs to a specific outlet subcollection.
+                    let salesCol, inventoryCol;
+                    if (outletId) {
+                        salesCol     = collection(db, 'users', uid, 'outlets', outletId, 'outlet_sales');
+                        inventoryCol = collection(db, 'users', uid, 'outlets', outletId, 'outlet_inventory');
+                    } else {
+                        salesCol     = collection(db, 'sales');
+                        inventoryCol = collection(db, 'inventory');
                     }
-                    
+
                     const product = state.allProducts.find(p => p.name === sale.product);
-                    
                     if (product) {
-                        // ⭐ Restore quantity in correct location
-                        const productDoc = doc(paths.inventory, product.id);
-                        await updateDoc(productDoc, {
+                        await updateDoc(doc(inventoryCol, product.id), {
                             quantity: product.quantity + sale.quantity,
                             lastUpdated: new Date().toISOString()
                         });
                     }
-                    
-                    // ⭐ Delete sale from correct location
-                    await deleteDoc(doc(paths.sales, saleId));
-                    
+
+                    await deleteDoc(doc(salesCol, saleId));
                     await ActivityLogger.log('Sale Deleted', `Deleted sale: ${sale.customer} - ${sale.product}`);
-                    
+
                     Utils.showToast('Sale deleted and stock restored', 'success');
-                    
-                    // Reload data
                     await dataLoader.loadAll();
                     this.markSectionsDirty(['sales', 'inventory', 'dashboard']);
                     this._refreshCurrentSectionIfDirty();
-                    
+
                 } catch (error) {
                     console.error('❌ Error deleting sale:', error);
                     Utils.showToast('Failed to delete sale: ' + error.message, 'error');
@@ -3897,41 +3950,67 @@ class AppController {
             populateAdminOutletSelector() {
                 const select = document.getElementById('outlet-filter-select');
                 if (!select) return;
-                
-                // Keep default options
+
                 let options = `
                     <option value="all">All Outlets (Consolidated)</option>
                     <option value="main">Main Office</option>
                 `;
-                
-                // Add outlet options
                 state.allOutlets.forEach(outlet => {
                     options += `<option value="${outlet.id}">${outlet.name}${outlet.location ? ' - ' + outlet.location : ''}</option>`;
                 });
-                
                 select.innerHTML = options;
-                
+
                 // Restore saved selection
-                const saved = localStorage.getItem('adminOutletFilter');
-                if (saved) {
-                    select.value = saved;
-                    state.selectedOutletFilter = saved;
+                const saved = localStorage.getItem('adminOutletFilter') || 'main';
+                select.value = saved;
+                state.selectedOutletFilter = saved;
+                this.updateOutletContextBanner(saved);
+
+                // Wire Exit button (idempotent — guard against double-binding)
+                const exitBtn = document.getElementById('outlet-context-exit');
+                if (exitBtn && !exitBtn._bound) {
+                    exitBtn._bound = true;
+                    exitBtn.addEventListener('click', async () => {
+                        select.value = 'main';
+                        localStorage.setItem('adminOutletFilter', 'main');
+                        state.selectedOutletFilter = 'main';
+                        this.updateOutletContextBanner('main');
+                        await this.loadDataForSelectedOutlet('main');
+                    });
                 }
             }
             
+            updateOutletContextBanner(outletId) {
+                const banner = document.getElementById('outlet-context-banner');
+                const textEl = document.getElementById('outlet-context-banner-text');
+                if (!banner || !textEl) return;
+
+                const isSpecific = outletId && outletId !== 'main' && outletId !== 'all';
+                if (!isSpecific || state.userRole !== 'admin') {
+                    banner.style.display = 'none';
+                    return;
+                }
+
+                const outlet = state.allOutlets.find(o => o.id === outletId);
+                const name = outlet ? outlet.name : outletId;
+                textEl.innerHTML = `
+                    <span class="outlet-banner-icon"><i class="fas fa-store"></i></span>
+                    <span class="outlet-banner-label">Operating in:</span>
+                    <span class="outlet-banner-name">${name}</span>
+                    <span style="opacity:0.6;font-size:11px;margin-left:4px;">— Inventory, Sales &amp; Expenses scoped to this outlet</span>
+                `;
+                banner.style.display = 'flex';
+            }
+
             async handleOutletFilterChange() {
                 const select = document.getElementById('outlet-filter-select');
                 if (!select) return;
-                
+
                 const selectedOutlet = select.value;
-                
-                // Save selection
                 localStorage.setItem('adminOutletFilter', selectedOutlet);
                 state.selectedOutletFilter = selectedOutlet;
-                
-                console.log('Outlet filter changed to:', selectedOutlet);
-                
-                // Reload data for selected outlet
+
+                this.updateOutletContextBanner(selectedOutlet);
                 await this.loadDataForSelectedOutlet(selectedOutlet);
             }
             
@@ -9969,31 +10048,39 @@ class AppController {
                 const outlet = state.allOutlets.find(o => o.id === outletId);
                 if (!outlet) return;
 
-                // Derive outlet-specific KPIs from in-memory state
-                const outletSales = state.allSales.filter(s =>
-                    s.outletId === outletId || s.location === outletId
-                );
-                const outletExpenses = state.allExpenses.filter(e =>
-                    e.source === outletId || e.outletId === outletId
-                );
-                const outletConsignments = [];
-                try {
-                    const ownerUid = outlet.createdBy || state.currentUser.uid;
-                    const snap = await getDocs(
-                        collection(db, 'users', ownerUid, 'outlets', outletId, 'consignments')
-                    );
-                    snap.forEach(d => outletConsignments.push({ id: d.id, ...d.data() }));
-                } catch (_) {}
+                Utils.showSpinner();
+
+                const ownerUid = outlet.createdBy || state.currentUser.uid;
+
+                // Fetch all outlet subcollections directly from Firestore so values
+                // are accurate regardless of the admin's current outlet filter in state.
+                const [salesSnap, expensesSnap, consignmentsSnap] = await Promise.allSettled([
+                    getDocs(collection(db, 'users', ownerUid, 'outlets', outletId, 'outlet_sales')),
+                    getDocs(collection(db, 'users', ownerUid, 'outlets', outletId, 'outlet_expenses')),
+                    getDocs(collection(db, 'users', ownerUid, 'outlets', outletId, 'consignments')),
+                ]);
+
+                const outletSales = salesSnap.status === 'fulfilled'
+                    ? salesSnap.value.docs.map(d => ({ id: d.id, ...d.data() })) : [];
+                const outletExpenses = expensesSnap.status === 'fulfilled'
+                    ? expensesSnap.value.docs.map(d => ({ id: d.id, ...d.data() })) : [];
+                const outletConsignments = consignmentsSnap.status === 'fulfilled'
+                    ? consignmentsSnap.value.docs.map(d => ({ id: d.id, ...d.data() })) : [];
+
+                Utils.hideSpinner();
 
                 const totalRevenue = outletSales.reduce((sum, s) => {
-                    const qty = parseFloat(s.quantity) || 0;
+                    const qty   = parseFloat(s.quantity) || 0;
                     const price = parseFloat(s.price) || 0;
-                    return sum + qty * price;
+                    const disc  = parseFloat(s.discount) || 0;
+                    const tax   = parseFloat(s.tax) || 0;
+                    const subtotal = qty * price * (1 - disc / 100);
+                    return sum + subtotal * (1 + tax / 100);
                 }, 0);
                 const totalExpenses = outletExpenses.reduce((sum, e) =>
                     sum + (parseFloat(e.amount) || 0), 0
                 );
-                const pendingConsignments = outletConsignments.filter(c => c.status === 'pending').length;
+                const pendingConsignments   = outletConsignments.filter(c => c.status === 'pending').length;
                 const confirmedConsignments = outletConsignments.filter(c => c.status === 'confirmed').length;
 
                 const statusColor = outlet.status === 'active' ? '#28a745' : '#dc3545';
@@ -11802,11 +11889,13 @@ class AppController {
                         `;
                         infoDiv.style.display = 'block';
                         
-                        // Set max payment amount
+                        // Set max payment amount — preserve step/min so decimals remain allowed
                         const paymentAmountInput = document.getElementById('payment-amount');
                         if (paymentAmountInput) {
+                            paymentAmountInput.setAttribute('step', '0.01');
+                            paymentAmountInput.setAttribute('min', '0.01');
                             paymentAmountInput.setAttribute('max', settlement.balanceDue);
-                            paymentAmountInput.value = settlement.balanceDue; // Default to full payment
+                            paymentAmountInput.value = parseFloat(settlement.balanceDue).toFixed(2);
                         }
                     }
                     
@@ -12408,19 +12497,19 @@ class AppController {
                 
                 state.allProducts.forEach(product => {
                     if (
-                        product.name.toLowerCase().includes(query) ||
-                        product.category.toLowerCase().includes(query) ||
+                        product.name?.toLowerCase().includes(query) ||
+                        product.category?.toLowerCase().includes(query) ||
                         product.barcode?.includes(query)
                     ) {
                         results.products.push(product);
                     }
                 });
-                
+
                 state.allSales.forEach(sale => {
                     if (
-                        sale.customer.toLowerCase().includes(query) ||
-                        sale.product.toLowerCase().includes(query) ||
-                        sale.date.includes(query)
+                        sale.customer?.toLowerCase().includes(query) ||
+                        sale.product?.toLowerCase().includes(query) ||
+                        sale.date?.includes(query)
                     ) {
                         results.sales.push(sale);
                     }
@@ -12428,19 +12517,19 @@ class AppController {
                 
                 state.allCustomers.forEach(customer => {
                     if (
-                        customer.name.toLowerCase().includes(query) ||
+                        customer.name?.toLowerCase().includes(query) ||
                         customer.email?.toLowerCase().includes(query) ||
                         customer.phone?.includes(query)
                     ) {
                         results.customers.push(customer);
                     }
                 });
-                
+
                 state.allExpenses.forEach(expense => {
                     if (
-                        expense.description.toLowerCase().includes(query) ||
-                        expense.category.toLowerCase().includes(query) ||
-                        expense.date.includes(query)
+                        expense.description?.toLowerCase().includes(query) ||
+                        expense.category?.toLowerCase().includes(query) ||
+                        expense.date?.includes(query)
                     ) {
                         results.expenses.push(expense);
                     }

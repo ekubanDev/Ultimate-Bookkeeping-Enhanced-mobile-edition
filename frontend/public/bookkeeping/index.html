@@ -113,9 +113,8 @@
                 <div id="global-search-results" class="global-search-results"></div>
             </div>
             
-            <div id="connection-status">Connecting...</div>
+            <div id="connection-status" class="conn-badge conn-connecting" title="Connecting..."><span class="conn-dot"></span></div>
             <div id="auth-controls">
-                <span id="user-email" style="display: none;"></span>
                 <span id="outlet-context" style="display: none; font-size: 0.9rem; opacity: 0.95; margin-right: 0.5rem;" aria-label="Current outlet"></span>
                 <span id="user-role-display"></span>
                 
@@ -165,6 +164,9 @@
         <div class="modal-content">
             <span class="close" data-modal="add-product-modal">&times;</span>
             <h3><i class="fas fa-box"></i> Add Product</h3>
+            <div id="product-outlet-context" style="display:none; background:#e8f4fd; border:1px solid #bee3f8; border-radius:6px; padding:8px 12px; margin-bottom:12px; font-size:13px; color:#2b6cb0;">
+                <i class="fas fa-store"></i> Adding to: <strong id="product-outlet-context-name"></strong>
+            </div>
             <form id="add-product-form">
                 <label for="product-name">Product Name</label>
                 <input type="text" id="product-name" placeholder="e.g. Kinky Twist" required autocomplete="off">
@@ -655,7 +657,7 @@
                 <input type="date" id="payment-date" required>
                 
                 <label>Amount Paid</label>
-                <input type="number" id="payment-amount" step="0.01" placeholder="Amount" required>
+                <input type="number" id="payment-amount" step="0.01" min="0.01" placeholder="0.00" required inputmode="decimal">
                 
                 <label>Payment Method</label>
                 <select id="payment-method" required>
@@ -1153,6 +1155,14 @@
             <span>More</span>
         </button>
     </nav>
+
+    <!-- Outlet context banner — shown when admin operates inside a specific outlet -->
+    <div id="outlet-context-banner" style="display:none;" role="status" aria-live="polite">
+        <span id="outlet-context-banner-text"></span>
+        <button id="outlet-context-exit" title="Exit outlet context" aria-label="Exit outlet context">
+            <i class="fas fa-times"></i> Exit
+        </button>
+    </div>
 
     <!-- Main Content Container -->
     <div id="sections-container"></div>
