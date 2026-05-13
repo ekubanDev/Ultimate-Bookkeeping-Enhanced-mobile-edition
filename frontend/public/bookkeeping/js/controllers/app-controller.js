@@ -3751,7 +3751,8 @@ class AppController {
                         description: document.getElementById('expense-description').value,
                         category: document.getElementById('expense-category').value,
                         amount: parseFloat(document.getElementById('expense-amount').value),
-                        createdAt: new Date().toISOString()
+                        createdAt: new Date().toISOString(),
+                        createdBy: state.currentUser.uid
                     };
 
                     const guard = validateExpenseWrite(expenseData);
@@ -6157,11 +6158,13 @@ class AppController {
                     return sum + discounted * (1 + (s.tax || 0) / 100);
                 }, 0);
                 
-                // Calculate COGS (Cost of Goods Sold)
+                // Calculate COGS — snapshot first, then current product cost
                 totalCOGS = filteredSales.reduce((sum, s) => {
+                    const qty = parseFloat(s.quantity) || 0;
+                    const snapshot = parseFloat(s.cost);
+                    if (Number.isFinite(snapshot) && snapshot > 0) return sum + qty * snapshot;
                     const product = state.allProducts.find(p => p.name === s.product);
-                    const cost = product ? product.cost : (s.cost || 0);
-                    return sum + (s.quantity * cost);
+                    return sum + qty * (product ? (parseFloat(product.cost) || 0) : 0);
                 }, 0);
                 
                 if (state.userRole === 'outlet_manager') {
@@ -7388,9 +7391,11 @@ class AppController {
                 }, 0);
                 
                 const totalCOGS = filteredSales.reduce((sum, s) => {
-                    const product = productMap.get(s.product);
                     const qty = parseFloat(s.quantity) || 0;
-                    return sum + (product ? qty * (parseFloat(product.cost) || 0) : 0);
+                    const snapshot = parseFloat(s.cost);
+                    if (Number.isFinite(snapshot) && snapshot > 0) return sum + qty * snapshot;
+                    const product = productMap.get(s.product);
+                    return sum + qty * (product ? (parseFloat(product.cost) || 0) : 0);
                 }, 0);
                 
                 // Calculate expenses correctly based on user role and filter
@@ -8315,12 +8320,13 @@ class AppController {
                     return sum + discounted * (1 + tax / 100);
                 }, 0);
                 
-                // Calculate COGS with NaN protection
+                // Calculate COGS — snapshot first, then current product cost
                 const totalCOGS = periodSales.reduce((sum, s) => {
-                    const product = state.allProducts.find(p => p.name === s.product);
                     const qty = parseFloat(s.quantity) || 0;
-                    const cost = product ? (parseFloat(product.cost) || 0) : 0;
-                    return sum + (qty * cost);
+                    const snapshot = parseFloat(s.cost);
+                    if (Number.isFinite(snapshot) && snapshot > 0) return sum + qty * snapshot;
+                    const product = state.allProducts.find(p => p.name === s.product);
+                    return sum + qty * (product ? (parseFloat(product.cost) || 0) : 0);
                 }, 0);
                 
                 const grossProfit = totalRevenue - totalCOGS;
