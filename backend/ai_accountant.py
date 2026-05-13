@@ -202,15 +202,15 @@ def _fetch_collection(db, *path_parts) -> List[Dict]:
 
 def _fetch_user_collection(db, uid: str, name: str) -> List[Dict]:
     """
-    Fetch user's collection by merging ALL three sources and deduplicating.
+    Fetch user's collection by merging three sources and deduplicating by doc ID.
+    All strategies run unconditionally — short-circuiting dropped historical data.
 
-    Strategies run unconditionally — short-circuiting was the bug: if recent
-    sales had createdBy (strategy 2 found them), older sales without createdBy
-    (strategy 3) were never reached, silently dropping historical data.
-
-    1. users/{uid}/{name}              — subcollection (new/outlet layout)
-    2. root /{name} where createdBy == uid — docs with ownership field
-    3. root /{name} all docs           — legacy docs written before createdBy was enforced
+    1. users/{uid}/{name}              — subcollection (outlet/new layout)
+    2. root/{name} where createdBy==uid — docs with ownership field (fast Firestore filter)
+    3. root/{name} legacy filter       — docs without createdBy (written before field was enforced)
+                                         Mirrors Firestore security rule default:
+                                         get('createdBy', requestUid) == requestUid
+                                         so another user's docs (createdBy != uid) are excluded.
     """
     seen: set = set()
     result: List[Dict] = []
@@ -223,21 +223,30 @@ def _fetch_user_collection(db, uid: str, name: str) -> List[Dict]:
 
     # 1 — user subcollection
     try:
-        _merge([{"id": d.id, **d.to_dict()} for d in db.collection("users").document(uid).collection(name).stream()])
+        _merge([{"id": d.id, **d.to_dict()} for d in
+                db.collection("users").document(uid).collection(name).stream()])
     except Exception as exc:
         logger.warning("Firestore users/%s/%s failed: %s", uid, name, exc)
 
-    # 2 — root with createdBy filter (fast path for docs that have the field)
+    # 2 — root collection filtered by createdBy (indexed, fast)
     try:
-        _merge([{"id": d.id, **d.to_dict()} for d in db.collection(name).where("createdBy", "==", uid).stream()])
+        _merge([{"id": d.id, **d.to_dict()} for d in
+                db.collection(name).where("createdBy", "==", uid).stream()])
     except Exception:
         pass
 
-    # 3 — root unfiltered: always run so historical docs without createdBy are included
+    # 3 — legacy docs that predate the createdBy field.
+    #     Read all, then keep only docs where createdBy is absent (legacy) or matches uid.
+    #     Docs belonging to another user have createdBy set to their uid and are excluded.
     try:
-        _merge([{"id": d.id, **d.to_dict()} for d in db.collection(name).stream()])
+        legacy = [
+            {"id": d.id, **d.to_dict()}
+            for d in db.collection(name).stream()
+            if d.to_dict().get("createdBy", uid) == uid
+        ]
+        _merge(legacy)
     except Exception as exc:
-        logger.warning("Firestore root/%s unfiltered failed: %s", name, exc)
+        logger.warning("Firestore root/%s legacy scan failed: %s", name, exc)
 
     return result
 
