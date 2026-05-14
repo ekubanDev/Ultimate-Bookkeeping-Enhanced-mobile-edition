@@ -23,6 +23,7 @@ from firebase_auth import (
     verify_bearer_id_token,
 )
 from ai_accountant import run_accountant
+from ai_inventory import run_inventory
 
 try:
     from emergentintegrations.llm.chat import LlmChat, UserMessage
@@ -1023,6 +1024,59 @@ async def ai_accountant_scheduled(data: ScheduledReportRequest, authorization: O
     except Exception as e:
         logger.error("Scheduled accountant report error: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail=f"Scheduled report failed: {str(e)}")
+
+
+# ==================== AI INVENTORY SKILL ENDPOINT ====================
+
+@api_router.post("/ai/inventory")
+async def ai_inventory(data: Dict[str, Any], authorization: Optional[str] = Header(None)):
+    """
+    AI Inventory Manager skill — agentic, reads live Firestore data for the authenticated user.
+    Requires a valid Firebase ID token in the Authorization: Bearer header.
+    """
+    try:
+        question = (data.get("question") or "").strip()
+        history  = data.get("history", []) if isinstance(data.get("history"), list) else []
+        api_key  = os.environ.get("EMERGENT_LLM_KEY")
+
+        if not question:
+            raise HTTPException(status_code=400, detail="question is required")
+
+        if not api_key:
+            return {"response": "AI Inventory Manager is not configured. EMERGENT_LLM_KEY is missing.", "tools_called": [], "steps": 0}
+
+        if not ensure_firebase_admin_app():
+            raise HTTPException(status_code=503, detail="Firebase Admin SDK not configured — inventory skill requires authentication.")
+
+        try:
+            claims = verify_bearer_id_token(authorization)
+            uid    = claims.get("uid") or claims.get("sub") or ""
+        except ValueError:
+            raise HTTPException(status_code=401, detail="Authentication required. Sign in to use the AI Inventory Manager.")
+        except Exception:
+            raise HTTPException(status_code=401, detail="Invalid or expired authentication token.")
+
+        if not uid:
+            raise HTTPException(status_code=401, detail="Could not determine user identity from token.")
+
+        try:
+            check_ai_chat_rate_limit(uid)
+        except PermissionError:
+            raise HTTPException(status_code=429, detail="Too many requests. Please wait a moment.")
+
+        result = await run_inventory(
+            question=question,
+            uid=uid,
+            history=history,
+            api_key=api_key,
+        )
+        return result
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("AI Inventory error: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Inventory skill failed: {str(e)}")
 
 
 # ==================== PO QUANTITY SUGGESTION ENDPOINT ====================

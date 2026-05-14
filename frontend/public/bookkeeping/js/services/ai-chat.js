@@ -45,6 +45,24 @@ const SKILLS = {
             ],
         },
     },
+    inventory: {
+        id:          'inventory',
+        label:       'Stock',
+        icon:        'fa-boxes',
+        color:       '#d97706',
+        endpoint:    '/api/ai/inventory',
+        placeholder: 'Ask about stock levels, reorders, suppliers...',
+        welcome: {
+            title: 'StockMaster — AI Inventory Manager',
+            desc:  'I have live access to your stock records. Ask me about inventory levels, reorder planning, ABC analysis, purchase orders, or dead stock.',
+            suggestions: [
+                { icon: 'fa-exclamation-triangle', q: 'Which products are running low or at risk of stockout?' },
+                { icon: 'fa-sort-amount-down',     q: 'Run an ABC analysis on my inventory' },
+                { icon: 'fa-shopping-cart',        q: 'What should I reorder right now?' },
+                { icon: 'fa-chart-bar',            q: 'Identify any dead stock in my inventory' },
+            ],
+        },
+    },
 };
 
 class AIChatService {
@@ -60,7 +78,7 @@ class AIChatService {
         this._fabAttrObserver = null;
         this.launcherButtons = [];
         this.activeSkill = 'general';
-        this._skillMessages = { general: [], accountant: [] };
+        this._skillMessages = { general: [], accountant: [], inventory: [] };
         this._schedulePanelOpen = false;
     }
 
