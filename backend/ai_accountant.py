@@ -87,6 +87,13 @@ rules override the general guidance above wherever there is any conflict.
 10. For ANY monthly comparison, best/worst month, or historical trend question —
     ALWAYS call get_monthly_breakdown (not get_financial_summary). It returns all months
     in one call. Never guess date ranges or loop get_financial_summary across months.
+11. Scope rules — ALWAYS respect these:
+    - Default scope is 'main' (main store only) for every tool unless the user specifies otherwise.
+    - When the user mentions a specific outlet by name, call list_outlets first to resolve the
+      exact name, then pass that name as scope.
+    - Only use scope='all' when the user explicitly asks for consolidated, combined, or
+      all-outlet figures.
+    - Always state the scope clearly in your response: "Main store only:", "Branch X:", "Consolidated (all outlets):"
 
 You have live access to the business's Firestore records via tools. Always call the
 relevant tool before answering any financial question — never rely on prior context alone.
@@ -251,6 +258,102 @@ def _fetch_user_collection(db, uid: str, name: str) -> List[Dict]:
     return result
 
 
+# ── Scope helpers ─────────────────────────────────────────────────────────
+# scope values:
+#   "main"           → root collections only (main store, no outlets)
+#   "all"            → root + all outlet subcollections (consolidated)
+#   "<outlet name>"  → that outlet's subcollections only
+
+def _get_outlets_map(db, uid: str) -> Dict[str, Dict]:
+    """
+    Returns {outlet_name_lower: {id, name, location}} for all outlets belonging to uid.
+    Used by scoped fetchers to resolve outlet names to Firestore IDs.
+    """
+    result = {}
+    try:
+        for doc in db.collection("users").document(uid).collection("outlets").stream():
+            data = doc.to_dict() or {}
+            name = (data.get("name") or doc.id).strip()
+            result[name.lower()] = {"id": doc.id, "name": name, "location": data.get("location") or ""}
+    except Exception as exc:
+        logger.warning("Could not fetch outlets for %s: %s", uid, exc)
+    return result
+
+
+def _resolve_outlet(scope: str, outlets_map: Dict[str, Dict]) -> Optional[Dict]:
+    """Fuzzy-match a scope string to an outlet entry. Returns None if not found."""
+    s = scope.lower().strip()
+    # Exact match first
+    if s in outlets_map:
+        return outlets_map[s]
+    # Substring match
+    for key, info in outlets_map.items():
+        if s in key or key in s:
+            return info
+    return None
+
+
+def _fetch_scoped(
+    db, uid: str,
+    root_col: str,
+    outlet_sub_col: str,
+    scope: str,
+    outlets_map: Dict[str, Dict],
+) -> List[Dict]:
+    """
+    Fetch documents from a collection according to scope:
+      "main" → root collection only (main store)
+      "all"  → root + every outlet subcollection (consolidated)
+      name   → that outlet's subcollection only
+    Deduplicates by document id.
+    """
+    seen: set = set()
+    result: List[Dict] = []
+
+    def _merge(docs):
+        for d in docs:
+            if d["id"] not in seen:
+                seen.add(d["id"])
+                result.append(d)
+
+    if scope == "main":
+        _merge(_fetch_user_collection(db, uid, root_col))
+
+    elif scope == "all":
+        _merge(_fetch_user_collection(db, uid, root_col))
+        for info in outlets_map.values():
+            _merge(_fetch_collection(db, "users", uid, "outlets", info["id"], outlet_sub_col))
+
+    else:
+        info = _resolve_outlet(scope, outlets_map)
+        if info:
+            _merge(_fetch_collection(db, "users", uid, "outlets", info["id"], outlet_sub_col))
+        else:
+            logger.warning("Outlet not found for scope=%r", scope)
+
+    return result
+
+
+def _tool_list_outlets(uid: str) -> Dict:
+    """List all outlets for the user — call this before using a named scope."""
+    db = _get_firestore()
+    if not db:
+        return {"error": "Firestore unavailable"}
+    outlets_map = _get_outlets_map(db, uid)
+    if not outlets_map:
+        return {
+            "outlets": [],
+            "note": "No outlets found. This account has a main store only. Use scope='main'.",
+        }
+    return {
+        "outlets": [
+            {"name": v["name"], "location": v["location"], "id": v["id"]}
+            for v in outlets_map.values()
+        ],
+        "note": "Use scope='main' for main store, scope='all' for consolidated, or scope='<outlet name>' for a specific branch.",
+    }
+
+
 # ── Tool implementations ───────────────────────────────────────────────────
 
 def _build_product_cost_map(db, uid: str) -> Dict[str, float]:
@@ -263,22 +366,14 @@ def _build_product_cost_map(db, uid: str) -> Dict[str, float]:
     }
 
 
-def _tool_get_financial_summary(uid: str, start: Optional[str], end: Optional[str]) -> Dict:
+def _tool_get_financial_summary(uid: str, start: Optional[str], end: Optional[str], scope: str = "main") -> Dict:
     db = _get_firestore()
     if not db:
         return {"error": "Firestore unavailable — Firebase Admin SDK not configured."}
 
-    sales    = _fetch_user_collection(db, uid, "sales")
-    expenses = _fetch_user_collection(db, uid, "expenses")
-
-    # Merge outlet subcollections (all outlets)
-    try:
-        outlets = [d.id for d in db.collection("users").document(uid).collection("outlets").stream()]
-        for oid in outlets:
-            sales    += _fetch_collection(db, "users", uid, "outlets", oid, "outlet_sales")
-            expenses += _fetch_collection(db, "users", uid, "outlets", oid, "outlet_expenses")
-    except Exception:
-        pass
+    outlets_map = _get_outlets_map(db, uid)
+    sales    = _fetch_scoped(db, uid, "sales",    "outlet_sales",    scope, outlets_map)
+    expenses = _fetch_scoped(db, uid, "expenses", "outlet_expenses", scope, outlets_map)
 
     period_sales    = [s for s in sales    if _in_period(s.get("date") or s.get("createdAt"), start, end)]
     period_expenses = [e for e in expenses if _in_period(e.get("date") or e.get("createdAt"), start, end)]
@@ -321,23 +416,18 @@ def _tool_get_financial_summary(uid: str, start: Optional[str], end: Optional[st
         "total_expense_records":     len(period_expenses),
         "operating_expense_records": len(operating_expenses),
         "uncategorised_expenses":    len(uncategorised),
+        "scope": scope,
         "note": "COGS uses sale-time cost snapshot (s.cost) where recorded, else current product cost. Revenue uses stored total where available (POS), otherwise qty×price×(1-discount%)×(1+tax%).",
     }
 
 
-def _tool_get_sales_breakdown(uid: str, start: Optional[str], end: Optional[str]) -> Dict:
+def _tool_get_sales_breakdown(uid: str, start: Optional[str], end: Optional[str], scope: str = "main") -> Dict:
     db = _get_firestore()
     if not db:
         return {"error": "Firestore unavailable"}
 
-    sales = _fetch_user_collection(db, uid, "sales")
-    try:
-        outlets = [d.id for d in db.collection("users").document(uid).collection("outlets").stream()]
-        for oid in outlets:
-            sales += _fetch_collection(db, "users", uid, "outlets", oid, "outlet_sales")
-    except Exception:
-        pass
-
+    outlets_map  = _get_outlets_map(db, uid)
+    sales        = _fetch_scoped(db, uid, "sales", "outlet_sales", scope, outlets_map)
     period_sales = [s for s in sales if _in_period(s.get("date") or s.get("createdAt"), start, end)]
 
     by_product: Dict[str, Dict] = {}
@@ -369,23 +459,18 @@ def _tool_get_sales_breakdown(uid: str, start: Optional[str], end: Optional[str]
         ],
         "daily_trend": [{"date": d, "revenue": round(r, 2)} for d, r in daily_trend],
         "by_outlet": {k: round(v, 2) for k, v in sorted(by_outlet.items(), key=lambda x: -x[1])},
+        "scope": scope,
     }
 
 
-def _tool_get_expense_breakdown(uid: str, start: Optional[str], end: Optional[str]) -> Dict:
+def _tool_get_expense_breakdown(uid: str, start: Optional[str], end: Optional[str], scope: str = "main") -> Dict:
     db = _get_firestore()
     if not db:
         return {"error": "Firestore unavailable"}
 
-    expenses = _fetch_user_collection(db, uid, "expenses")
-    try:
-        outlets = [d.id for d in db.collection("users").document(uid).collection("outlets").stream()]
-        for oid in outlets:
-            expenses += _fetch_collection(db, "users", uid, "outlets", oid, "outlet_expenses")
-    except Exception:
-        pass
-
-    period = [e for e in expenses if _in_period(e.get("date") or e.get("createdAt"), start, end)]
+    outlets_map = _get_outlets_map(db, uid)
+    expenses    = _fetch_scoped(db, uid, "expenses", "outlet_expenses", scope, outlets_map)
+    period      = [e for e in expenses if _in_period(e.get("date") or e.get("createdAt"), start, end)]
 
     operating = [e for e in period if not _is_debt_payment(e)]
     debt_pmts = [e for e in period if     _is_debt_payment(e)]
@@ -414,6 +499,7 @@ def _tool_get_expense_breakdown(uid: str, start: Optional[str], end: Optional[st
         "uncategorised":      uncategorised[:10],
         "uncategorised_count": len(uncategorised),
         "debt_payments_detail": [{"description": e.get("description",""), "amount": _safe_float(e.get("amount",0)), "date": str(e.get("date",""))[:10]} for e in debt_pmts[:5]],
+        "scope": scope,
     }
 
 
@@ -454,22 +540,14 @@ def _tool_get_liabilities(uid: str) -> Dict:
     }
 
 
-def _tool_get_vat_summary(uid: str, start: Optional[str], end: Optional[str]) -> Dict:
+def _tool_get_vat_summary(uid: str, start: Optional[str], end: Optional[str], scope: str = "main") -> Dict:
     db = _get_firestore()
     if not db:
         return {"error": "Firestore unavailable"}
 
-    sales    = _fetch_user_collection(db, uid, "sales")
-    expenses = _fetch_user_collection(db, uid, "expenses")
-
-    # Merge outlet data (same as financial summary)
-    try:
-        outlets = [d.id for d in db.collection("users").document(uid).collection("outlets").stream()]
-        for oid in outlets:
-            sales    += _fetch_collection(db, "users", uid, "outlets", oid, "outlet_sales")
-            expenses += _fetch_collection(db, "users", uid, "outlets", oid, "outlet_expenses")
-    except Exception:
-        pass
+    outlets_map = _get_outlets_map(db, uid)
+    sales    = _fetch_scoped(db, uid, "sales",    "outlet_sales",    scope, outlets_map)
+    expenses = _fetch_scoped(db, uid, "expenses", "outlet_expenses", scope, outlets_map)
 
     period_sales    = [s for s in sales    if _in_period(s.get("date") or s.get("createdAt"), start, end)]
     period_expenses = [e for e in expenses if _in_period(e.get("date") or e.get("createdAt"), start, end)]
@@ -498,11 +576,12 @@ def _tool_get_vat_summary(uid: str, start: Optional[str], end: Optional[str]) ->
         "total_tax_collected": total_tax,
         "input_vat_on_expenses": input_vat,
         "estimated_vat_payable_to_gra": max(0, vat_payable),
+        "scope": scope,
         "note": "Estimates only. Actual VAT obligations depend on whether your business is VAT-registered with GRA.",
     }
 
 
-def _tool_get_monthly_breakdown(uid: str) -> Dict:
+def _tool_get_monthly_breakdown(uid: str, scope: str = "main") -> Dict:
     """
     Groups ALL sales and expenses by calendar month (YYYY-MM) in a single pass.
     Returns a sorted monthly P&L table so the LLM can compare months without
@@ -512,16 +591,9 @@ def _tool_get_monthly_breakdown(uid: str) -> Dict:
     if not db:
         return {"error": "Firestore unavailable — Firebase Admin SDK not configured."}
 
-    sales    = _fetch_user_collection(db, uid, "sales")
-    expenses = _fetch_user_collection(db, uid, "expenses")
-
-    try:
-        outlets = [d.id for d in db.collection("users").document(uid).collection("outlets").stream()]
-        for oid in outlets:
-            sales    += _fetch_collection(db, "users", uid, "outlets", oid, "outlet_sales")
-            expenses += _fetch_collection(db, "users", uid, "outlets", oid, "outlet_expenses")
-    except Exception:
-        pass
+    outlets_map = _get_outlets_map(db, uid)
+    sales    = _fetch_scoped(db, uid, "sales",    "outlet_sales",    scope, outlets_map)
+    expenses = _fetch_scoped(db, uid, "expenses", "outlet_expenses", scope, outlets_map)
 
     product_cost_map = _build_product_cost_map(db, uid)
 
@@ -591,6 +663,7 @@ def _tool_get_monthly_breakdown(uid: str) -> Dict:
     best = max(rows, key=lambda r: r["net_profit"])
 
     return {
+        "scope":                  scope,
         "data_range":             {"first_month": sorted_keys[0], "last_month": sorted_keys[-1]},
         "total_months_with_data": len(rows),
         "best_month":             {"month": best["month"], "net_profit": best["net_profit"], "net_margin_pct": best["net_margin_pct"]},
@@ -665,6 +738,7 @@ ACCOUNTANT_TOOLS = [
                 "properties": {
                     "start_date": {"type": "string"},
                     "end_date":   {"type": "string"},
+                    "scope":      {"type": "string", "description": "'main' (default), 'all' for consolidated, or outlet name"},
                 },
             },
         },
@@ -679,6 +753,7 @@ ACCOUNTANT_TOOLS = [
                 "properties": {
                     "start_date": {"type": "string"},
                     "end_date":   {"type": "string"},
+                    "scope":      {"type": "string", "description": "'main' (default), 'all' for consolidated, or outlet name"},
                 },
             },
         },
@@ -701,6 +776,7 @@ ACCOUNTANT_TOOLS = [
                 "properties": {
                     "start_date": {"type": "string"},
                     "end_date":   {"type": "string"},
+                    "scope":      {"type": "string", "description": "'main' (default), 'all' for consolidated, or outlet name"},
                 },
             },
         },
@@ -727,9 +803,23 @@ ACCOUNTANT_TOOLS = [
                 "Returns a month-by-month P&L table covering ALL historical data in one call. "
                 "Always call this — instead of get_financial_summary — when the user asks: "
                 "which month had the highest/lowest profit, monthly trends, historical comparisons, "
-                "best/worst month, year-over-year, or any question that spans multiple months. "
-                "Returns sorted monthly rows with revenue, operating_expenses, debt_payments, "
-                "gross_profit, net_profit, profit_margin_pct, and a best_month summary."
+                "best/worst month, year-over-year, or any question that spans multiple months."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "scope": {"type": "string", "description": "'main' (default), 'all' for consolidated, or outlet name"},
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_outlets",
+            "description": (
+                "Returns all outlet names and IDs for this account. "
+                "Call this before using a named scope so you know the exact outlet names available."
             ),
             "parameters": {"type": "object", "properties": {}},
         },
@@ -740,21 +830,24 @@ ACCOUNTANT_TOOLS = [
 def _dispatch_tool(name: str, args: Dict, uid: str, api_key: str) -> str:
     start = args.get("start_date")
     end   = args.get("end_date")
+    scope = args.get("scope", "main")
 
     if name == "get_financial_summary":
-        result = _tool_get_financial_summary(uid, start, end)
+        result = _tool_get_financial_summary(uid, start, end, scope)
     elif name == "get_sales_breakdown":
-        result = _tool_get_sales_breakdown(uid, start, end)
+        result = _tool_get_sales_breakdown(uid, start, end, scope)
     elif name == "get_expense_breakdown":
-        result = _tool_get_expense_breakdown(uid, start, end)
+        result = _tool_get_expense_breakdown(uid, start, end, scope)
     elif name == "get_liabilities":
         result = _tool_get_liabilities(uid)
     elif name == "get_vat_summary":
-        result = _tool_get_vat_summary(uid, start, end)
+        result = _tool_get_vat_summary(uid, start, end, scope)
     elif name == "classify_expense":
         result = _tool_classify_expense(args.get("description", ""), api_key)
     elif name == "get_monthly_breakdown":
-        result = _tool_get_monthly_breakdown(uid)
+        result = _tool_get_monthly_breakdown(uid, scope)
+    elif name == "list_outlets":
+        result = _tool_list_outlets(uid)
     else:
         result = {"error": f"Unknown tool: {name}"}
 

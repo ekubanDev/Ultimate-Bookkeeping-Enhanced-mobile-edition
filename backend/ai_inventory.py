@@ -30,6 +30,9 @@ from ai_accountant import (
     _get_firestore,
     _fetch_collection,
     _fetch_user_collection,
+    _fetch_scoped,
+    _get_outlets_map,
+    _tool_list_outlets,
     _sale_total,
 )
 
@@ -79,6 +82,12 @@ Your name is **StockMaster**. You operate in the Ghanaian retail market.
 10. When the user shares inventory data without a specific question, scan for the
     3 most important signals: stockout risk, dead stock, margin/costing issues.
     Lead with the most urgent finding.
+11. Scope rules — ALWAYS respect these:
+    - Default scope is 'main' (main store only) unless the user specifies otherwise.
+    - When the user mentions a specific outlet by name, call list_outlets first to
+      get the exact outlet name, then pass it as scope.
+    - Only use scope='all' when the user explicitly asks for consolidated or all-outlet figures.
+    - Always state the scope in your response: "Main store:", "Branch X:", "Consolidated:"
 
 You have live access to the business's Firestore records via tools. Always call the
 relevant tool before answering any inventory question.
@@ -89,39 +98,12 @@ SYSTEM_PROMPT = (_SKILL_DOC + "\n\n" + _INVENTORY_RULES).strip() if _SKILL_DOC e
 
 # ── Shared data helpers ────────────────────────────────────────────────────
 
-def _fetch_all_products(db, uid: str) -> List[Dict]:
-    """Fetch inventory (products) from root + outlet subcollections."""
-    products = _fetch_user_collection(db, uid, "inventory")
-    try:
-        outlets = [d.id for d in db.collection("users").document(uid).collection("outlets").stream()]
-        for oid in outlets:
-            products += _fetch_collection(db, "users", uid, "outlets", oid, "outlet_inventory")
-    except Exception:
-        pass
-    # Deduplicate by id
-    seen, result = set(), []
-    for p in products:
-        if p["id"] not in seen:
-            seen.add(p["id"])
-            result.append(p)
-    return result
+def _fetch_products(db, uid: str, scope: str, outlets_map: Dict) -> List[Dict]:
+    return _fetch_scoped(db, uid, "inventory", "outlet_inventory", scope, outlets_map)
 
 
-def _fetch_all_sales(db, uid: str) -> List[Dict]:
-    """Fetch sales from root + outlet subcollections."""
-    sales = _fetch_user_collection(db, uid, "sales")
-    try:
-        outlets = [d.id for d in db.collection("users").document(uid).collection("outlets").stream()]
-        for oid in outlets:
-            sales += _fetch_collection(db, "users", uid, "outlets", oid, "outlet_sales")
-    except Exception:
-        pass
-    seen, result = set(), []
-    for s in sales:
-        if s["id"] not in seen:
-            seen.add(s["id"])
-            result.append(s)
-    return result
+def _fetch_sales(db, uid: str, scope: str, outlets_map: Dict) -> List[Dict]:
+    return _fetch_scoped(db, uid, "sales", "outlet_sales", scope, outlets_map)
 
 
 def _avg_daily_sales_qty(sales: List[Dict], product_name: str, days: int = 30) -> float:
@@ -138,13 +120,14 @@ def _avg_daily_sales_qty(sales: List[Dict], product_name: str, days: int = 30) -
 
 # ── Tool implementations ───────────────────────────────────────────────────
 
-def _tool_get_inventory_status(uid: str) -> Dict:
+def _tool_get_inventory_status(uid: str, scope: str = "main") -> Dict:
     db = _get_firestore()
     if not db:
         return {"error": "Firestore unavailable — Firebase Admin SDK not configured."}
 
-    products = _fetch_all_products(db, uid)
-    sales    = _fetch_all_sales(db, uid)
+    outlets_map = _get_outlets_map(db, uid)
+    products    = _fetch_products(db, uid, scope, outlets_map)
+    sales       = _fetch_sales(db, uid, scope, outlets_map)
 
     if not products:
         return {"error": "No inventory records found.", "items": []}
@@ -216,16 +199,18 @@ def _tool_get_inventory_status(uid: str) -> Dict:
         "dead_stock_count":  dead_stock_count,
         "total_stock_value": round(total_stock_value, 2),
         "items":             items,
+        "scope": scope,
         "note": f"Days remaining based on 30-day avg daily sales. Stockout risk = days_remaining < {DEFAULT_LEAD_TIME_DAYS} days (assumed lead time).",
     }
 
 
-def _tool_get_abc_analysis(uid: str, days: int = 90) -> Dict:
+def _tool_get_abc_analysis(uid: str, days: int = 90, scope: str = "main") -> Dict:
     db = _get_firestore()
     if not db:
         return {"error": "Firestore unavailable"}
 
-    sales = _fetch_all_sales(db, uid)
+    outlets_map = _get_outlets_map(db, uid)
+    sales = _fetch_sales(db, uid, scope, outlets_map)
     cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
     period_sales = [s for s in sales if str(s.get("date", ""))[:10] >= cutoff]
 
@@ -271,17 +256,19 @@ def _tool_get_abc_analysis(uid: str, days: int = 90) -> Dict:
         "total_revenue":  round(total_revenue, 2),
         "grade_summary":  {"A": a_count, "B": b_count, "C": c_count},
         "items":          items,
+        "scope": scope,
         "note": "A = top 80% of revenue, B = next 15%, C = bottom 5%. Focus management effort on A items.",
     }
 
 
-def _tool_get_reorder_recommendations(uid: str) -> Dict:
+def _tool_get_reorder_recommendations(uid: str, scope: str = "main") -> Dict:
     db = _get_firestore()
     if not db:
         return {"error": "Firestore unavailable"}
 
-    products = _fetch_all_products(db, uid)
-    sales    = _fetch_all_sales(db, uid)
+    outlets_map = _get_outlets_map(db, uid)
+    products    = _fetch_products(db, uid, scope, outlets_map)
+    sales       = _fetch_sales(db, uid, scope, outlets_map)
 
     recommendations = []
     for p in products:
@@ -323,6 +310,7 @@ def _tool_get_reorder_recommendations(uid: str) -> Dict:
     urgent = [r for r in recommendations if r["needs_reorder"]]
 
     return {
+        "scope":             scope,
         "total_skus":        len(recommendations),
         "items_needing_reorder": len(urgent),
         "recommendations":   recommendations,
@@ -335,13 +323,14 @@ def _tool_get_reorder_recommendations(uid: str) -> Dict:
     }
 
 
-def _tool_get_stock_movements(uid: str, product_name: Optional[str], days: int = 30) -> Dict:
+def _tool_get_stock_movements(uid: str, product_name: Optional[str], days: int = 30, scope: str = "main") -> Dict:
     db = _get_firestore()
     if not db:
         return {"error": "Firestore unavailable"}
 
-    cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
-    sales  = _fetch_all_sales(db, uid)
+    cutoff      = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+    outlets_map = _get_outlets_map(db, uid)
+    sales       = _fetch_sales(db, uid, scope, outlets_map)
 
     if product_name:
         sales = [
@@ -395,6 +384,7 @@ def _tool_get_stock_movements(uid: str, product_name: Optional[str], days: int =
     total_in  = sum(m["qty_in"]  for m in in_movements)
 
     return {
+        "scope":           scope,
         "period_days":     days,
         "product_filter":  product_name or "all products",
         "total_sales_out": round(total_out, 0),
@@ -453,7 +443,17 @@ def _tool_get_purchase_orders(uid: str) -> Dict:
 
 # ── Tool registry ──────────────────────────────────────────────────────────
 
+SCOPE_PARAM = {"type": "string", "description": "'main' (default — main store only), 'all' (consolidated), or an outlet name"}
+
 INVENTORY_TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "list_outlets",
+            "description": "Returns all outlet names for this account. Call before using a named scope so you know the exact outlet names available.",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
     {
         "type": "function",
         "function": {
@@ -464,7 +464,10 @@ INVENTORY_TOOLS = [
                 "dead stock identification, and total stock value. "
                 "Always call this first for any stock or inventory question."
             ),
-            "parameters": {"type": "object", "properties": {}},
+            "parameters": {
+                "type": "object",
+                "properties": {"scope": SCOPE_PARAM},
+            },
         },
     },
     {
@@ -473,13 +476,13 @@ INVENTORY_TOOLS = [
             "name": "get_abc_analysis",
             "description": (
                 "Classifies all products by revenue contribution into A (top 80%), "
-                "B (next 15%), C (bottom 5%) grades. Call for questions about which products "
-                "matter most, where to focus buying effort, or stock prioritisation."
+                "B (next 15%), C (bottom 5%) grades."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "days": {"type": "integer", "description": "Analysis period in days (default 90)"},
+                    "days":  {"type": "integer", "description": "Analysis period in days (default 90)"},
+                    "scope": SCOPE_PARAM,
                 },
             },
         },
@@ -489,28 +492,26 @@ INVENTORY_TOOLS = [
         "function": {
             "name": "get_reorder_recommendations",
             "description": (
-                "Calculates reorder point (ROP) and Economic Order Quantity (EOQ) for every "
-                "product using actual 30-day sales velocity. Flags items that are at or below "
-                "their reorder point and suggests order quantities. Call for reorder planning, "
-                "'what should I order?', or replenishment questions."
+                "Calculates ROP and EOQ for every product using real sales velocity. "
+                "Flags items at or below their reorder point."
             ),
-            "parameters": {"type": "object", "properties": {}},
+            "parameters": {
+                "type": "object",
+                "properties": {"scope": SCOPE_PARAM},
+            },
         },
     },
     {
         "type": "function",
         "function": {
             "name": "get_stock_movements",
-            "description": (
-                "Returns sales (stock out) and purchase order receipts (stock in) over a period. "
-                "Call for movement history, demand analysis, or to understand how fast a "
-                "specific product sells."
-            ),
+            "description": "Returns sales (stock out) and PO receipts (stock in) over a period.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "product_name": {"type": "string", "description": "Filter to a specific product name, or omit for all"},
+                    "product_name": {"type": "string", "description": "Filter to a specific product, or omit for all"},
                     "days":         {"type": "integer", "description": "Lookback period in days (default 30)"},
+                    "scope":        SCOPE_PARAM,
                 },
             },
         },
@@ -519,11 +520,7 @@ INVENTORY_TOOLS = [
         "type": "function",
         "function": {
             "name": "get_purchase_orders",
-            "description": (
-                "Returns all purchase orders with supplier, status, item lines, quantities, "
-                "and total value. Call for supplier analysis, open PO tracking, or three-way "
-                "matching questions."
-            ),
+            "description": "Returns all purchase orders with supplier, status, item lines, quantities, and total value.",
             "parameters": {"type": "object", "properties": {}},
         },
     },
@@ -531,14 +528,17 @@ INVENTORY_TOOLS = [
 
 
 def _dispatch_tool(name: str, args: Dict, uid: str) -> str:
-    if name == "get_inventory_status":
-        result = _tool_get_inventory_status(uid)
+    scope = args.get("scope", "main")
+    if name == "list_outlets":
+        result = _tool_list_outlets(uid)
+    elif name == "get_inventory_status":
+        result = _tool_get_inventory_status(uid, scope)
     elif name == "get_abc_analysis":
-        result = _tool_get_abc_analysis(uid, days=int(args.get("days", 90)))
+        result = _tool_get_abc_analysis(uid, days=int(args.get("days", 90)), scope=scope)
     elif name == "get_reorder_recommendations":
-        result = _tool_get_reorder_recommendations(uid)
+        result = _tool_get_reorder_recommendations(uid, scope)
     elif name == "get_stock_movements":
-        result = _tool_get_stock_movements(uid, args.get("product_name"), days=int(args.get("days", 30)))
+        result = _tool_get_stock_movements(uid, args.get("product_name"), days=int(args.get("days", 30)), scope=scope)
     elif name == "get_purchase_orders":
         result = _tool_get_purchase_orders(uid)
     else:
