@@ -13,6 +13,7 @@ from email_templates import (
     low_stock_alert_html,
     daily_summary_html,
     weekly_summary_html,
+    monthly_summary_html,
     test_email_html,
 )
 
@@ -36,7 +37,7 @@ class EmailService:
             return False
 
         msg = MIMEMultipart("alternative")
-        msg["From"] = self.gmail_user
+        msg["From"] = f"Ultimate Bookkeeping <{self.gmail_user}>"
         msg["To"] = to
         msg["Subject"] = subject
         msg.attach(MIMEText(html_body, "html"))
@@ -61,26 +62,36 @@ class EmailService:
     ) -> bool:
         html = low_stock_alert_html(products, business_name)
         count = len(products)
-        subject = f"⚠️ Stock Alert — {count} item{'s' if count != 1 else ''} need attention"
+        subject = f"Stock Alert — {count} item{'s' if count != 1 else ''} need attention"
         return await self._send(recipient, subject, html)
 
     async def send_daily_summary(
         self, data: dict, recipient: str, business_name: str = "Ultimate Bookkeeping"
     ) -> bool:
         html = daily_summary_html(data, business_name)
-        subject = f"📊 Daily Summary — {data.get('date', 'Today')}"
+        label = data.get("label", data.get("date_label", "Today"))
+        subject = f"Daily P&L Report — {label}"
         return await self._send(recipient, subject, html)
 
     async def send_weekly_summary(
         self, data: dict, recipient: str, business_name: str = "Ultimate Bookkeeping"
     ) -> bool:
         html = weekly_summary_html(data, business_name)
-        subject = f"📈 Weekly Report — {data.get('weekStart', '')} to {data.get('weekEnd', '')}"
+        label = data.get("label", f"{data.get('week_start','')} to {data.get('week_end','')}")
+        subject = f"Weekly Report — {label}"
+        return await self._send(recipient, subject, html)
+
+    async def send_monthly_summary(
+        self, data: dict, recipient: str, business_name: str = "Ultimate Bookkeeping"
+    ) -> bool:
+        html = monthly_summary_html(data, business_name)
+        month = data.get("month_name", data.get("label", "Monthly Report"))
+        subject = f"Monthly Financial Summary — {month}"
         return await self._send(recipient, subject, html)
 
     async def send_test(self, recipient: str) -> bool:
         html = test_email_html()
-        return await self._send(recipient, "✅ Test — Email Notifications Working", html)
+        return await self._send(recipient, "Email Notifications Working — Ultimate Bookkeeping", html)
 
 
 email_service = EmailService()

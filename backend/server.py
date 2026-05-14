@@ -1485,6 +1485,8 @@ async def email_send_report(request: SendReportRequest):
         ok = await email_service.send_daily_summary(request.data, request.recipient, request.business_name)
     elif request.report_type == "weekly":
         ok = await email_service.send_weekly_summary(request.data, request.recipient, request.business_name)
+    elif request.report_type == "monthly":
+        ok = await email_service.send_monthly_summary(request.data, request.recipient, request.business_name)
     else:
         raise HTTPException(status_code=400, detail=f"Unknown report type: {request.report_type}")
     if not ok:
@@ -1506,6 +1508,139 @@ async def email_test(request: TestEmailRequest):
 async def email_update_settings(request: EmailSettingsRequest):
     report_scheduler.update_schedule(request.model_dump())
     return {"status": "updated", "emailNotifications": request.emailNotifications, "dailyReports": request.dailyReports}
+
+
+# ── Report Preferences (per-user, Firestore-backed) ───────────────────────────
+
+class ReportPreferencesRequest(BaseModel):
+    email: str = ""
+    business_name: str = ""
+    daily_enabled: bool = False
+    weekly_enabled: bool = False
+    monthly_enabled: bool = False
+    stock_alerts_enabled: bool = False
+
+class SendNowRequest(BaseModel):
+    report_type: str  # "daily" | "weekly" | "monthly"
+
+_PREFS_SUBCOL = "settings"
+_PREFS_DOC    = "report_preferences"
+
+
+@api_router.get("/reports/preferences")
+async def get_report_preferences(authorization: Optional[str] = Header(None)):
+    try:
+        if not ensure_firebase_admin_app():
+            raise HTTPException(status_code=503, detail="Firebase not available")
+        claims = verify_bearer_id_token(authorization)
+        uid = claims.get("uid") or claims.get("sub") or ""
+        if not uid:
+            raise HTTPException(status_code=401, detail="Invalid token")
+
+        from ai_accountant import _get_firestore
+        db = _get_firestore()
+        if not db:
+            raise HTTPException(status_code=503, detail="Firestore not available")
+
+        doc = (db.collection("users").document(uid)
+               .collection(_PREFS_SUBCOL).document(_PREFS_DOC).get())
+        if doc.exists:
+            return doc.to_dict()
+        return {"email": "", "business_name": "", "daily_enabled": False,
+                "weekly_enabled": False, "monthly_enabled": False, "stock_alerts_enabled": False}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@api_router.post("/reports/preferences")
+async def save_report_preferences(
+    data: ReportPreferencesRequest,
+    authorization: Optional[str] = Header(None),
+):
+    try:
+        if not ensure_firebase_admin_app():
+            raise HTTPException(status_code=503, detail="Firebase not available")
+        claims = verify_bearer_id_token(authorization)
+        uid = claims.get("uid") or claims.get("sub") or ""
+        if not uid:
+            raise HTTPException(status_code=401, detail="Invalid token")
+
+        from ai_accountant import _get_firestore
+        db = _get_firestore()
+        if not db:
+            raise HTTPException(status_code=503, detail="Firestore not available")
+
+        payload = data.model_dump()
+        payload["updated_at"] = datetime.now(timezone.utc).isoformat()
+        (db.collection("users").document(uid)
+           .collection(_PREFS_SUBCOL).document(_PREFS_DOC).set(payload, merge=True))
+
+        return {"status": "saved"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@api_router.post("/reports/send-now")
+async def send_report_now(
+    data: SendNowRequest,
+    authorization: Optional[str] = Header(None),
+):
+    try:
+        if not ensure_firebase_admin_app():
+            raise HTTPException(status_code=503, detail="Firebase not available")
+        claims = verify_bearer_id_token(authorization)
+        uid = claims.get("uid") or claims.get("sub") or ""
+        if not uid:
+            raise HTTPException(status_code=401, detail="Invalid token")
+
+        report_type = data.report_type
+        if report_type not in ("daily", "weekly", "monthly"):
+            raise HTTPException(status_code=400, detail="report_type must be daily, weekly, or monthly")
+
+        if not email_service.configured:
+            raise HTTPException(status_code=503, detail="Email service not configured (GMAIL_USER / GMAIL_APP_PASSWORD missing)")
+
+        from ai_accountant import _get_firestore
+        db = _get_firestore()
+        if not db:
+            raise HTTPException(status_code=503, detail="Firestore not available")
+
+        prefs_doc = (db.collection("users").document(uid)
+                       .collection(_PREFS_SUBCOL).document(_PREFS_DOC).get())
+        if not prefs_doc.exists:
+            raise HTTPException(status_code=400, detail="No email preferences set. Save preferences first.")
+        prefs = prefs_doc.to_dict()
+        recipient = prefs.get("email", "")
+        if not recipient:
+            raise HTTPException(status_code=400, detail="No email address in preferences")
+        business_name = prefs.get("business_name", "Your Business")
+
+        from report_generator import get_daily_data, get_weekly_data, get_monthly_data
+        from scheduler import _store_report_record
+
+        if report_type == "daily":
+            report_data = get_daily_data(db, uid)
+            ok = await email_service.send_daily_summary(report_data, recipient, business_name)
+        elif report_type == "weekly":
+            report_data = get_weekly_data(db, uid)
+            ok = await email_service.send_weekly_summary(report_data, recipient, business_name)
+        else:
+            report_data = get_monthly_data(db, uid)
+            ok = await email_service.send_monthly_summary(report_data, recipient, business_name)
+
+        if ok:
+            _store_report_record(db, uid, report_type, report_data)
+        return {"status": "sent" if ok else "failed", "report_type": report_type, "recipient": recipient}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("send_report_now error: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @api_router.post("/metrics/events")

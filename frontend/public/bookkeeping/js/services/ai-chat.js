@@ -168,11 +168,34 @@ class AIChatService {
                         <button id="ai-schedule-close" title="Close"><i class="fas fa-times"></i></button>
                     </div>
                     <div class="ai-schedule-panel-body">
+
+                        <!-- Email delivery section -->
+                        <div class="ai-schedule-email-section">
+                            <div class="ai-schedule-email-row">
+                                <i class="fas fa-envelope" style="color:#0ea5e9;margin-right:8px;"></i>
+                                <strong>Email Delivery</strong>
+                            </div>
+                            <label class="ai-schedule-field" style="margin-top:8px;">
+                                Email address
+                                <input type="email" id="sch-email" placeholder="your@email.com" autocomplete="email">
+                            </label>
+                            <label class="ai-schedule-field">
+                                Business name
+                                <input type="text" id="sch-business-name" placeholder="My Shop">
+                            </label>
+                            <div class="ai-schedule-email-actions">
+                                <button class="ai-schedule-test-btn" id="sch-test-email" title="Send test email">
+                                    <i class="fas fa-paper-plane"></i> Test Email
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Daily P&L -->
                         <div class="ai-schedule-section">
                             <div class="ai-schedule-row">
                                 <div class="ai-schedule-info">
                                     <i class="fas fa-chart-line" style="color:#059669"></i>
-                                    <div><strong>Daily P&amp;L</strong><small>Every day at a set time</small></div>
+                                    <div><strong>Daily P&amp;L</strong><small>Revenue, COGS &amp; profit every evening</small></div>
                                 </div>
                                 <label class="ai-toggle-switch">
                                     <input type="checkbox" id="sch-daily-enabled">
@@ -180,14 +203,17 @@ class AIChatService {
                                 </label>
                             </div>
                             <div class="ai-schedule-options" id="sch-daily-opts">
-                                <label class="ai-schedule-field">Time <input type="time" id="sch-daily-time" value="07:00"></label>
+                                <label class="ai-schedule-field">Delivery time (8PM UTC default) <input type="time" id="sch-daily-time" value="20:00"></label>
+                                <button class="ai-schedule-send-now-btn" data-type="daily"><i class="fas fa-bolt"></i> Send Now</button>
                             </div>
                         </div>
+
+                        <!-- Weekly -->
                         <div class="ai-schedule-section">
                             <div class="ai-schedule-row">
                                 <div class="ai-schedule-info">
                                     <i class="fas fa-tags" style="color:#d97706"></i>
-                                    <div><strong>Weekly Expenses</strong><small>Categorise &amp; flag unusual spending</small></div>
+                                    <div><strong>Weekly Report</strong><small>P&amp;L + VAT + expense breakdown</small></div>
                                 </div>
                                 <label class="ai-toggle-switch">
                                     <input type="checkbox" id="sch-weekly-enabled">
@@ -205,13 +231,16 @@ class AIChatService {
                                     </select>
                                 </label>
                                 <label class="ai-schedule-field">Time <input type="time" id="sch-weekly-time" value="09:00"></label>
+                                <button class="ai-schedule-send-now-btn" data-type="weekly"><i class="fas fa-bolt"></i> Send Now</button>
                             </div>
                         </div>
+
+                        <!-- Monthly -->
                         <div class="ai-schedule-section">
                             <div class="ai-schedule-row">
                                 <div class="ai-schedule-info">
                                     <i class="fas fa-file-invoice" style="color:#7c3aed"></i>
-                                    <div><strong>Monthly VAT</strong><small>Liability &amp; compliance summary</small></div>
+                                    <div><strong>Monthly Summary</strong><small>Full P&amp;L + VAT + GRA filing reminder</small></div>
                                 </div>
                                 <label class="ai-toggle-switch">
                                     <input type="checkbox" id="sch-monthly-enabled">
@@ -221,9 +250,13 @@ class AIChatService {
                             <div class="ai-schedule-options" id="sch-monthly-opts">
                                 <label class="ai-schedule-field">Day of month <input type="number" id="sch-monthly-day" min="1" max="28" value="1"></label>
                                 <label class="ai-schedule-field">Time <input type="time" id="sch-monthly-time" value="08:00"></label>
+                                <button class="ai-schedule-send-now-btn" data-type="monthly"><i class="fas fa-bolt"></i> Send Now</button>
                             </div>
                         </div>
-                        <button class="ai-schedule-save-btn" id="ai-schedule-save"><i class="fas fa-check"></i> Save Schedule</button>
+
+                        <button class="ai-schedule-save-btn" id="ai-schedule-save"><i class="fas fa-check"></i> Save &amp; Enable</button>
+                        <div id="ai-schedule-status" style="display:none;margin:8px 0;padding:8px 12px;border-radius:6px;font-size:13px;"></div>
+
                         <div class="ai-schedule-history">
                             <h5>Recent Reports</h5>
                             <div id="ai-schedule-history-list"><p class="ai-schedule-empty">No reports generated yet.</p></div>
@@ -827,10 +860,12 @@ class AIChatService {
         if (!panel) return;
         this._schedulePanelOpen = true;
         this._loadScheduleIntoUI();
+        this._loadEmailPrefsFromBackend();
         this._renderReportHistory();
         panel.classList.add('open');
         accountantScheduler.clearUnread();
         this.updateFabBadge();
+        this._bindSchedulePanelButtons();
     }
 
     _closeSchedulePanel() {
@@ -868,7 +903,41 @@ class AIChatService {
         showOpts('monthly', cfg.monthly_vat.enabled);
     }
 
-    _saveScheduleFromUI() {
+    async _loadEmailPrefsFromBackend() {
+        const user = auth.currentUser;
+        if (!user) return;
+        try {
+            const token = await user.getIdToken();
+            const resp = await fetch(`${window.BACKEND_URL || ''}/api/reports/preferences`, {
+                headers: { Authorization: `Bearer ${token}` },
+            });
+            if (!resp.ok) return;
+            const prefs = await resp.json();
+            const setVal = (id, val) => {
+                const el = document.getElementById(id);
+                if (el && val !== undefined) el.value = val;
+            };
+            setVal('sch-email', prefs.email || '');
+            setVal('sch-business-name', prefs.business_name || '');
+            // Sync enable states from backend prefs
+            const sync = (id, val) => {
+                const el = document.getElementById(id);
+                if (el && val !== undefined) el.checked = val;
+            };
+            sync('sch-daily-enabled',   prefs.daily_enabled);
+            sync('sch-weekly-enabled',  prefs.weekly_enabled);
+            sync('sch-monthly-enabled', prefs.monthly_enabled);
+            ['daily', 'weekly', 'monthly'].forEach(t => {
+                const el = document.getElementById(`sch-${t}-enabled`);
+                const opts = document.getElementById(`sch-${t}-opts`);
+                if (opts) opts.classList.toggle('visible', el?.checked || false);
+            });
+        } catch (e) {
+            console.warn('[Schedule] Could not load email prefs:', e);
+        }
+    }
+
+    async _saveScheduleFromUI() {
         const getTime = (id) => {
             const el = document.getElementById(id);
             if (!el || !el.value) return [7, 0];
@@ -877,6 +946,7 @@ class AIChatService {
         };
         const checked = (id) => document.getElementById(id)?.checked || false;
         const numVal  = (id, fallback) => parseInt(document.getElementById(id)?.value || fallback, 10) || fallback;
+        const strVal  = (id) => document.getElementById(id)?.value?.trim() || '';
 
         const [dh, dm] = getTime('sch-daily-time');
         const [wh, wm] = getTime('sch-weekly-time');
@@ -884,17 +954,115 @@ class AIChatService {
 
         accountantScheduler.saveConfig({
             daily_pl:       { enabled: checked('sch-daily-enabled'),   hour: dh, minute: dm },
-            weekly_expense: { enabled: checked('sch-weekly-enabled'),  day: numVal('sch-weekly-day', 1),       hour: wh, minute: wm },
+            weekly_expense: { enabled: checked('sch-weekly-enabled'),  day: numVal('sch-weekly-day', 1), hour: wh, minute: wm },
             monthly_vat:    { enabled: checked('sch-monthly-enabled'), dayOfMonth: numVal('sch-monthly-day', 1), hour: mh, minute: mm },
         });
 
         const btn = document.getElementById('ai-schedule-save');
-        if (btn) {
-            const orig = btn.innerHTML;
-            btn.innerHTML = '<i class="fas fa-check"></i> Saved!';
-            btn.disabled = true;
-            setTimeout(() => { btn.innerHTML = orig; btn.disabled = false; }, 1500);
+        if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Saving…'; }
+
+        const email = strVal('sch-email');
+        const businessName = strVal('sch-business-name');
+
+        if (email) {
+            try {
+                const user = auth.currentUser;
+                if (user) {
+                    const token = await user.getIdToken();
+                    await fetch(`${window.BACKEND_URL || ''}/api/reports/preferences`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+                        body: JSON.stringify({
+                            email,
+                            business_name: businessName,
+                            daily_enabled:   checked('sch-daily-enabled'),
+                            weekly_enabled:  checked('sch-weekly-enabled'),
+                            monthly_enabled: checked('sch-monthly-enabled'),
+                        }),
+                    });
+                }
+            } catch (e) {
+                console.warn('[Schedule] Failed to save email prefs:', e);
+            }
         }
+
+        if (btn) {
+            btn.innerHTML = '<i class="fas fa-check"></i> Saved!';
+            setTimeout(() => { btn.innerHTML = '<i class="fas fa-check"></i> Save &amp; Enable'; btn.disabled = false; }, 1800);
+        }
+    }
+
+    _showScheduleStatus(msg, isError = false) {
+        const el = document.getElementById('ai-schedule-status');
+        if (!el) return;
+        el.style.display = 'block';
+        el.style.background = isError ? '#fee2e2' : '#d1fae5';
+        el.style.color = isError ? '#991b1b' : '#065f46';
+        el.textContent = msg;
+        setTimeout(() => { el.style.display = 'none'; }, 4000);
+    }
+
+    _bindSchedulePanelButtons() {
+        // Test email button
+        const testBtn = document.getElementById('sch-test-email');
+        if (testBtn && !testBtn._bound) {
+            testBtn._bound = true;
+            testBtn.addEventListener('click', async () => {
+                const email = document.getElementById('sch-email')?.value?.trim();
+                if (!email) { this._showScheduleStatus('Enter an email address first.', true); return; }
+                testBtn.disabled = true;
+                testBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Sending…';
+                try {
+                    const user = auth.currentUser;
+                    const token = await user?.getIdToken();
+                    const resp = await fetch(`${window.BACKEND_URL || ''}/api/email/test`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+                        body: JSON.stringify({ recipient: email }),
+                    });
+                    this._showScheduleStatus(resp.ok ? `Test email sent to ${email}` : 'Send failed — check server logs.', !resp.ok);
+                } catch (e) {
+                    this._showScheduleStatus('Could not reach backend.', true);
+                } finally {
+                    testBtn.disabled = false;
+                    testBtn.innerHTML = '<i class="fas fa-paper-plane"></i> Test Email';
+                }
+            });
+        }
+
+        // Send now buttons
+        document.querySelectorAll('.ai-schedule-send-now-btn').forEach(btn => {
+            if (btn._bound) return;
+            btn._bound = true;
+            btn.addEventListener('click', async () => {
+                const type = btn.dataset.type;
+                const email = document.getElementById('sch-email')?.value?.trim();
+                if (!email) { this._showScheduleStatus('Save your email address first.', true); return; }
+                btn.disabled = true;
+                btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Sending…';
+                try {
+                    const user = auth.currentUser;
+                    const token = await user?.getIdToken();
+                    const resp = await fetch(`${window.BACKEND_URL || ''}/api/reports/send-now`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+                        body: JSON.stringify({ report_type: type }),
+                    });
+                    const result = await resp.json().catch(() => ({}));
+                    const ok = resp.ok && result.status === 'sent';
+                    this._showScheduleStatus(
+                        ok ? `${type.charAt(0).toUpperCase() + type.slice(1)} report sent to ${email}` : (result.detail || 'Send failed.'),
+                        !ok
+                    );
+                    if (ok) this._renderReportHistory();
+                } catch (e) {
+                    this._showScheduleStatus('Could not reach backend.', true);
+                } finally {
+                    btn.disabled = false;
+                    btn.innerHTML = '<i class="fas fa-bolt"></i> Send Now';
+                }
+            });
+        });
     }
 
     _renderReportHistory() {
