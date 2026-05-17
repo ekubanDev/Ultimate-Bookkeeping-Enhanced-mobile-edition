@@ -8,15 +8,19 @@
 import { Utils } from '../utils/utils.js';
 import { state } from '../utils/state.js';
 import { db, collection, query, where, getDocs } from '../config/firebase.js';
+import { saveBlobWithNativeFallbacks } from '../utils/native-pdf-save.js';
+import { isDebtPayment } from '../utils/accounting.js';
 
 class ExportService {
     constructor() {
         this.initialized = false;
     }
 
+    isDebtPayment(expense) { return isDebtPayment(expense); }
+
     // ==================== CSV EXPORT ====================
 
-    exportToCSV(data, filename, columns = null) {
+    async exportToCSV(data, filename, columns = null) {
         if (!data || data.length === 0) {
             Utils.showToast('No data to export', 'warning');
             return;
@@ -49,8 +53,8 @@ class ExportService {
             csvContent += values.join(',') + '\n';
         });
 
-        this.downloadFile(csvContent, filename, 'text/csv');
-        Utils.showToast('CSV exported successfully', 'success');
+        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+        await this._deliverExportBlob(blob, filename, 'CSV export', 'CSV exported successfully');
     }
 
     // ==================== EXCEL EXPORT (using SheetJS) ====================
@@ -76,10 +80,11 @@ class ExportService {
             // Add worksheet to workbook
             XLSX.utils.book_append_sheet(wb, ws, sheetName);
             
-            // Generate Excel file
-            XLSX.writeFile(wb, filename);
-            
-            Utils.showToast('Excel file exported successfully', 'success');
+            const out = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+            const blob = new Blob([out], {
+                type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            });
+            await this._deliverExportBlob(blob, filename, 'Excel export', 'Excel file exported successfully');
         } catch (error) {
             console.error('Excel export failed:', error);
             Utils.showToast('Excel export failed', 'error');
@@ -138,8 +143,13 @@ class ExportService {
                 );
             }
             
-            doc.save(config.filename);
-            Utils.showToast('PDF exported successfully', 'success');
+            const blob = doc.output('blob');
+            await this._deliverExportBlob(
+                blob,
+                config.filename,
+                config.title || 'PDF export',
+                'PDF exported successfully'
+            );
         } catch (error) {
             console.error('PDF export failed:', error);
             Utils.showToast('PDF export failed', 'error');
@@ -148,7 +158,7 @@ class ExportService {
 
     // ==================== SPECIALIZED EXPORTS ====================
 
-    exportSalesReport(startDate, endDate) {
+    async exportSalesReport(startDate, endDate) {
         const filteredSales = state.allSales.filter(sale => {
             const saleDate = sale.date;
             return (!startDate || saleDate >= startDate) && 
@@ -183,10 +193,10 @@ class ExportService {
         }
 
         const filename = `sales_report_${startDate}_to_${endDate}.csv`;
-        this.exportToCSV(data, filename);
+        await this.exportToCSV(data, filename);
     }
 
-    exportInventoryReport() {
+    async exportInventoryReport() {
         const data = state.allProducts.map(product => {
             const qty = parseInt(product.quantity) || 0;
             const cost = parseFloat(product.cost) || 0;
@@ -209,10 +219,10 @@ class ExportService {
             };
         });
 
-        this.exportToCSV(data, 'inventory_report.csv');
+        await this.exportToCSV(data, 'inventory_report.csv');
     }
 
-    exportExpensesReport(startDate, endDate) {
+    async exportExpensesReport(startDate, endDate) {
         const filteredExpenses = state.allExpenses.filter(expense => {
             const expenseDate = expense.date;
             return (!startDate || expenseDate >= startDate) && 
@@ -238,7 +248,7 @@ class ExportService {
         }
 
         const filename = `expenses_report_${startDate}_to_${endDate}.csv`;
-        this.exportToCSV(data, filename);
+        await this.exportToCSV(data, filename);
     }
 
     _getSupplierName(supplierId, creditor, supplierName) {
@@ -369,14 +379,14 @@ class ExportService {
                     Notes: p.Notes
                 });
             });
-            this.exportToCSV(csvRows, `supplier_payment_history_${startDate || 'all'}_to_${endDate || 'all'}.csv`, csvColumns);
+            await this.exportToCSV(csvRows, `supplier_payment_history_${startDate || 'all'}_to_${endDate || 'all'}.csv`, csvColumns);
         } catch (error) {
             console.error('Supplier payments export failed:', error);
             Utils.showToast('Failed to export supplier payments', 'error');
         }
     }
 
-    exportCustomersReport() {
+    async exportCustomersReport() {
         const data = state.allCustomers.map(customer => ({
             Name: customer.name,
             Email: customer.email || '',
@@ -387,7 +397,7 @@ class ExportService {
             'Last Purchase': customer.lastPurchase ? Utils.formatDate(customer.lastPurchase) : 'Never'
         }));
 
-        this.exportToCSV(data, 'customers_report.csv');
+        await this.exportToCSV(data, 'customers_report.csv');
     }
 
     async exportFinancialStatement(type, period) {
@@ -407,14 +417,18 @@ class ExportService {
         });
 
         const totalRevenue = periodSales.reduce((sum, s) => sum + (parseFloat(s.total) || 0), 0);
-        const totalExpenses = periodExpenses.reduce((sum, e) => sum + (parseFloat(e.amount) || 0), 0);
+        const operatingExpenses = periodExpenses.filter(e => !this.isDebtPayment(e));
+        const debtPayments = periodExpenses.filter(e => this.isDebtPayment(e));
+        const totalExpenses = operatingExpenses.reduce((sum, e) => sum + (parseFloat(e.amount) || 0), 0);
+        const totalDebtPayments = debtPayments.reduce((sum, e) => sum + (parseFloat(e.amount) || 0), 0);
         const totalLiabilities = periodLiabilities.reduce((sum, l) => sum + (parseFloat(l.balance) || 0), 0);
 
         if (type === 'income') {
             title = `Income Statement - ${period} (GHS)`;
             data = [
                 { Category: 'Total Revenue', Amount: Utils.formatCurrencyGHS(totalRevenue) },
-                { Category: 'Total Expenses', Amount: Utils.formatCurrencyGHS(totalExpenses) },
+                { Category: 'Operating Expenses', Amount: Utils.formatCurrencyGHS(totalExpenses) },
+                { Category: 'Debt/Liability Payments (not expense)', Amount: Utils.formatCurrencyGHS(totalDebtPayments) },
                 { Category: 'Net Income', Amount: Utils.formatCurrencyGHS(totalRevenue - totalExpenses) }
             ];
             columns = [
@@ -513,8 +527,16 @@ class ExportService {
             const summaryWS = XLSX.utils.json_to_sheet(summaryData);
             XLSX.utils.book_append_sheet(wb, summaryWS, 'Summary');
 
-            XLSX.writeFile(wb, `comprehensive_report_${period}.xlsx`);
-            Utils.showToast('Comprehensive report exported successfully', 'success');
+            const out = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+            const blob = new Blob([out], {
+                type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            });
+            await this._deliverExportBlob(
+                blob,
+                `comprehensive_report_${period}.xlsx`,
+                'Comprehensive report',
+                'Comprehensive report exported successfully'
+            );
         } catch (error) {
             console.error('Comprehensive export failed:', error);
             Utils.showToast('Export failed', 'error');
@@ -556,6 +578,29 @@ class ExportService {
     }
 
     // ==================== UTILITY METHODS ====================
+
+    /**
+     * Capacitor / Web Share / download — same strategy as PDF exports.
+     */
+    async _deliverExportBlob(blob, filename, shareTitle, successToast) {
+        if (typeof Utils !== 'undefined' && Utils.showToast) {
+            Utils.showToast('Preparing export…', 'info');
+        }
+        try {
+            const r = await saveBlobWithNativeFallbacks(
+                blob,
+                filename,
+                shareTitle,
+                'Save to Files or share this file'
+            );
+            if (r.cancelled) return;
+            if (r.ok) Utils.showToast(successToast, 'success');
+        } catch (e) {
+            console.error('Export delivery failed:', e);
+            Utils.showToast('Export failed: ' + (e.message || e), 'error');
+            throw e;
+        }
+    }
 
     downloadFile(content, filename, mimeType) {
         const blob = new Blob([content], { type: mimeType });

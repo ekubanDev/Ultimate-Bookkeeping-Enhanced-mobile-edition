@@ -58,8 +58,9 @@ class SalesReturnsService {
                 createdAt: new Date().toISOString()
             };
 
-            // Save return record
-            await addDoc(firebaseService.getUserCollection('returns'), returnRecord);
+            // Save return record — capture ID for linked expense / downstream use
+            const returnDocRef = await addDoc(firebaseService.getUserCollection('returns'), returnRecord);
+            returnRecord.id = returnDocRef.id;
 
             // Update inventory if item is resellable
             if (condition === 'resellable') {

@@ -1,0 +1,22 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3 -c ':*)",
+      "Bash(python3 /tmp/uipro/src/ui-ux-pro-max/scripts/search.py \"dashboard analytics financial data\" --domain chart -n 10)",
+      "Bash(python3 /tmp/uipro/src/ui-ux-pro-max/scripts/search.py \"mobile form checkout payment\" --domain ux -n 10)",
+      "Bash(python3 /tmp/uipro/src/ui-ux-pro-max/scripts/search.py \"loading skeleton empty state error feedback\" --domain ux -n 10)",
+      "Bash(python3 /tmp/uipro/src/ui-ux-pro-max/scripts/search.py \"navigation sidebar menu mobile\" --domain ux -n 10)",
+      "Bash(python3 /tmp/uipro/src/ui-ux-pro-max/scripts/search.py \"button touch target size interaction\" --domain ux -n 10)",
+      "Bash(python3 /tmp/uipro/src/ui-ux-pro-max/scripts/search.py \"data table filter search sort pagination\" --domain ux -n 10)",
+      "Bash(python3 /tmp/uipro/src/ui-ux-pro-max/scripts/search.py \"animation transition micro-interaction\" --domain ux -n 10)",
+      "Bash(python3 /tmp/uipro/src/ui-ux-pro-max/scripts/search.py \"revenue profit expense category breakdown\" --domain chart -n 5)",
+      "Bash(python3 /tmp/uipro/src/ui-ux-pro-max/scripts/search.py \"SMB bookkeeping invoice receipt\" --domain landing -n 5)",
+      "Bash(python3 /tmp/uipro/src/ui-ux-pro-max/scripts/search.py \"part proportion donut pie category share\" --domain chart -n 5)",
+      "Bash(python3 /tmp/uipro/src/ui-ux-pro-max/scripts/search.py \"modal dialog confirm destructive action\" --domain ux -n 8)"
+    ]
+  },
+  "enabledPlugins": {
+    "frontend-design@claude-plugins-official": true,
+    "feature-dev@claude-plugins-official": true
+  }
+}

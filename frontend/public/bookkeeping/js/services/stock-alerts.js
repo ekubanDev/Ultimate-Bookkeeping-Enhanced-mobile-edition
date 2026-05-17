@@ -43,6 +43,80 @@ class StockAlertsService {
     }
 
     /**
+     * Build a map of productId → pending PO info for products already on order.
+     * Derived from state.allPurchaseOrders — no extra Firestore reads needed.
+     * Status automatically reverts when a PO is deleted or cancelled from state.
+     * @returns {Map<string, {poNumber: string, poId: string, pendingQty: number}>}
+     */
+    getProductsOnOrder() {
+        const map = new Map();
+        const pendingPOs = (state.allPurchaseOrders || []).filter(po => po.status === 'pending');
+        pendingPOs.forEach(po => {
+            (po.items || []).forEach(item => {
+                if (!item.productId) return;
+                const existing = map.get(item.productId);
+                if (existing) {
+                    existing.pendingQty += (parseFloat(item.quantity) || 0);
+                } else {
+                    map.set(item.productId, {
+                        poNumber: po.poNumber,
+                        poId: po.id,
+                        pendingQty: parseFloat(item.quantity) || 0
+                    });
+                }
+            });
+        });
+        return map;
+    }
+
+    /**
+     * Rule-based order quantity prediction.
+     * Uses last 90 days of sales to compute average daily velocity,
+     * then targets 45 days of forward stock minus what's already on hand.
+     * Falls back to minStock when there is no sales history.
+     * @param {Object} product
+     * @returns {{ qty: number, avgDailySales: number, basedOnDays: number }}
+     */
+    suggestOrderQuantity(product) {
+        const sales = state.allSales || [];
+        const lookbackDays = 90;
+        const targetDays = 45;
+
+        const cutoff = new Date();
+        cutoff.setDate(cutoff.getDate() - lookbackDays);
+        const cutoffStr = cutoff.toISOString().slice(0, 10);
+
+        const productSales = sales.filter(s =>
+            (s.product === product.name || s.productId === product.id) &&
+            s.date >= cutoffStr
+        );
+
+        const totalQtySold = productSales.reduce((sum, s) => sum + (parseFloat(s.quantity) || 0), 0);
+        const avgDailySales = totalQtySold / lookbackDays;
+        const currentStock = parseFloat(product.quantity) || 0;
+        const minStock = parseFloat(product.minStock) || 10;
+
+        const targetStock = Math.ceil(avgDailySales * targetDays);
+        const suggested = Math.max(minStock, targetStock - currentStock);
+
+        return {
+            qty: Math.ceil(suggested),
+            avgDailySales: Math.round(avgDailySales * 10) / 10,
+            basedOnDays: lookbackDays
+        };
+    }
+
+    /**
+     * Re-render the dashboard stock alerts widget so "On Order" status
+     * reflects the current state.allPurchaseOrders immediately after any PO change.
+     */
+    refreshAlertWidget() {
+        const widget = document.getElementById('stock-alerts-widget');
+        if (!widget) return;
+        widget.innerHTML = this.generateAlertsWidget();
+    }
+
+    /**
      * Get products expiring soon (if expiry date is tracked)
      * @param {number} daysThreshold - Days until expiry
      * @returns {Array} Products expiring within threshold
@@ -218,54 +292,76 @@ class StockAlertsService {
         document.getElementById('stock-alerts-modal-title').innerHTML = 
             `<i class="fas ${iconMap[type]}" style="color: var(--${type === 'danger' ? 'danger' : type})"></i> ${title}`;
 
+        const onOrderMap = this.getProductsOnOrder();
         const productIds = products.map(p => p.id).filter(Boolean);
-        const totalNeeded = products.reduce((sum, p) => {
-            const min = parseFloat(p.minStock) || 10;
-            const qty = parseFloat(p.quantity) || 0;
-            return sum + Math.max(0, min - qty);
-        }, 0);
+
+        // Only include products NOT already on order in the bulk PO suggestion
+        const notOnOrder = products.filter(p => !onOrderMap.has(p.id));
+        const totalSuggested = notOnOrder.reduce((sum, p) => sum + this.suggestOrderQuantity(p).qty, 0);
 
         let content = '';
 
-        if (products.length > 1 && (type === 'danger' || type === 'warning')) {
+        if (notOnOrder.length > 0 && (type === 'danger' || type === 'warning')) {
+            const idsToOrder = notOnOrder.map(p => p.id);
             content += `
                 <div style="background: linear-gradient(135deg, #e8f5e9, #c8e6c9); border-radius: 10px; padding: 1rem 1.25rem; margin-bottom: 1rem; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 0.75rem;">
                     <div>
                         <strong style="color: #2e7d32;"><i class="fas fa-lightbulb"></i> Suggested Action</strong>
                         <p style="margin: 0.25rem 0 0; color: #1b5e20; font-size: 0.9rem;">
-                            Create a purchase order for all ${products.length} items (${Math.ceil(totalNeeded)} units needed)
+                            Create a purchase order for ${notOnOrder.length} item${notOnOrder.length > 1 ? 's' : ''} (~${Math.ceil(totalSuggested)} units suggested)
                         </p>
                     </div>
-                    <button onclick="window.appController.openCreatePOForProducts([${productIds.map(id => "'" + id + "'").join(',')}]); document.getElementById('stock-alerts-modal').style.display='none';"
+                    <button onclick="window.appController.openCreatePOForProducts([${idsToOrder.map(id => "'" + id + "'").join(',')}]); document.getElementById('stock-alerts-modal').style.display='none';"
                             style="background: #2e7d32; color: white; border: none; padding: 0.625rem 1.25rem; border-radius: 8px; cursor: pointer; font-weight: 600; white-space: nowrap;">
                         <i class="fas fa-file-invoice"></i> Create Purchase Order
                     </button>
                 </div>
             `;
+        } else if (products.length > 0 && notOnOrder.length === 0 && (type === 'danger' || type === 'warning')) {
+            content += `
+                <div style="background: linear-gradient(135deg, #e3f2fd, #bbdefb); border-radius: 10px; padding: 1rem 1.25rem; margin-bottom: 1rem;">
+                    <strong style="color: #1565c0;"><i class="fas fa-truck"></i> All items are on order</strong>
+                    <p style="margin: 0.25rem 0 0; color: #0d47a1; font-size: 0.9rem;">Purchase orders are pending for all flagged products.</p>
+                </div>
+            `;
         }
 
         content += '<div class="table-responsive"><table class="stock-alerts-table">';
-        content += '<thead><tr><th>Product</th><th>Category</th><th>Current</th><th>Min.</th><th>Needed</th><th>Action</th></tr></thead>';
+        content += '<thead><tr><th>Product</th><th>Category</th><th>Stock</th><th>Min.</th><th>Suggested Qty</th><th>Status / Action</th></tr></thead>';
         content += '<tbody>';
 
         products.forEach(product => {
             const qty = parseFloat(product.quantity) || 0;
             const min = parseFloat(product.minStock) || 10;
-            const needed = Math.max(0, min - qty);
             const stockClass = qty <= 0 ? 'stock-critical' : 'stock-warning';
+            const suggestion = this.suggestOrderQuantity(product);
+            const onOrder = onOrderMap.get(product.id);
+
+            const suggestedCell = `<strong>${suggestion.qty}</strong><br><small style="color:#888;">${suggestion.avgDailySales}/day avg</small>`;
+
+            let actionCell;
+            if (onOrder) {
+                actionCell = `
+                    <span style="background:#1565c0;color:#fff;padding:3px 8px;border-radius:10px;font-size:0.75rem;white-space:nowrap;">
+                        <i class="fas fa-truck"></i> On Order (${onOrder.pendingQty} units)
+                    </span>
+                    <br><small style="color:#555;margin-top:2px;display:inline-block;">PO: ${(onOrder.poNumber || '').replace(/</g,'&lt;')}</small>`;
+            } else {
+                actionCell = `
+                    <button onclick="window.appController.openCreatePOForProduct('${product.id}')"
+                            class="btn-sm btn-primary" style="white-space: nowrap;">
+                        <i class="fas fa-shopping-cart"></i> Order
+                    </button>`;
+            }
+
             content += `
                 <tr>
-                    <td><strong>${product.name}</strong></td>
-                    <td>${product.category || 'N/A'}</td>
+                    <td><strong>${(product.name || '').replace(/</g,'&lt;')}</strong></td>
+                    <td>${(product.category || 'N/A').replace(/</g,'&lt;')}</td>
                     <td class="${stockClass}">${qty}</td>
                     <td>${min}</td>
-                    <td><strong>${needed}</strong></td>
-                    <td>
-                        <button onclick="window.appController.openCreatePOForProduct('${product.id}')" 
-                                class="btn-sm btn-primary" style="white-space: nowrap;">
-                            <i class="fas fa-shopping-cart"></i> Order
-                        </button>
-                    </td>
+                    <td>${suggestedCell}</td>
+                    <td>${actionCell}</td>
                 </tr>
             `;
         });
@@ -375,34 +471,56 @@ class StockAlertsService {
         modal.className = 'modal';
         modal.style.display = 'block';
 
+        const onOrderMap = this.getProductsOnOrder();
+        const notOnOrderItems = restockItems.filter(p => !onOrderMap.has(p.id));
+
         let rows = '';
         allProblems.forEach(p => {
             const qty = parseFloat(p.quantity) || 0;
             const min = parseFloat(p.minStock) || 10;
             const needed = Math.max(0, min - qty);
+            const onOrder = onOrderMap.get(p.id);
+
             let badge = '';
-            if (p._alertType === 'out') {
+            if (onOrder) {
+                badge = `<span style="background:#1565c0;color:#fff;padding:2px 8px;border-radius:10px;font-size:0.75rem;" title="PO: ${(onOrder.poNumber || '').replace(/"/g, '&quot;')}"><i class="fas fa-truck"></i> On Order</span>`;
+            } else if (p._alertType === 'out') {
                 badge = '<span style="background:#dc3545;color:#fff;padding:2px 8px;border-radius:10px;font-size:0.75rem;">Out of Stock</span>';
             } else if (p._alertType === 'low') {
                 badge = '<span style="background:#ffc107;color:#333;padding:2px 8px;border-radius:10px;font-size:0.75rem;">Low Stock</span>';
             } else {
                 badge = '<span style="background:#17a2b8;color:#fff;padding:2px 8px;border-radius:10px;font-size:0.75rem;">Expiring</span>';
             }
+
+            const suggestedQty = (p._alertType !== 'exp' && !onOrder)
+                ? this.suggestOrderQuantity(p).qty
+                : (onOrder ? onOrder.pendingQty : '-');
+
             rows += `<tr>
                 <td><strong>${(p.name || '').replace(/</g, '&lt;')}</strong></td>
                 <td>${badge}</td>
                 <td style="text-align:center;">${qty}</td>
                 <td style="text-align:center;">${min}</td>
                 <td style="text-align:center;font-weight:600;">${p._alertType === 'exp' ? '-' : needed}</td>
+                <td style="text-align:center;color:#1565c0;font-weight:600;">${suggestedQty}</td>
             </tr>`;
         });
 
         let poButton = '';
-        if (restockItems.length > 0) {
+        if (notOnOrderItems.length > 0) {
+            const notOnOrderIds = notOnOrderItems.map(p => p.id).filter(Boolean);
+            const totalSuggested = notOnOrderItems.reduce((sum, p) => sum + this.suggestOrderQuantity(p).qty, 0);
+            const isReady = state.dataReady;
+            const label = `<i class="fas fa-file-invoice"></i> Create Purchase Order (${notOnOrderItems.length} items, ~${Math.ceil(totalSuggested)} units)`;
             poButton = `
-                <button onclick="window.appController?.openCreatePOForProducts([${restockIds.map(id => "'" + id + "'").join(',')}]); document.getElementById('startup-stock-alert').remove();"
-                        style="background:#2e7d32;color:#fff;border:none;padding:0.6rem 1.25rem;border-radius:8px;cursor:pointer;font-weight:600;">
-                    <i class="fas fa-file-invoice"></i> Create Purchase Order (${restockItems.length} items, ${Math.ceil(totalNeeded)} units)
+                <button id="startup-po-btn"
+                        data-product-ids='${JSON.stringify(notOnOrderIds)}'
+                        data-label="${label.replace(/"/g, '&quot;')}"
+                        ${isReady ? `onclick="(function(b){window.appController?.openCreatePOForProducts(JSON.parse(b.dataset.productIds));document.getElementById('startup-stock-alert')?.remove();})(this)"` : ''}
+                        ${isReady ? '' : 'disabled'}
+                        style="background:${isReady ? '#2e7d32' : '#94a3b8'};color:#fff;border:none;padding:0.6rem 1.25rem;border-radius:8px;cursor:${isReady ? 'pointer' : 'not-allowed'};font-weight:600;display:flex;align-items:center;gap:0.5rem;opacity:${isReady ? '1' : '0.7'};">
+                    ${isReady ? '' : '<i class="fas fa-spinner fa-spin"></i>'}
+                    ${isReady ? label : 'Loading data...'}
                 </button>`;
         }
 
@@ -424,6 +542,7 @@ class StockAlertsService {
                                 <th style="padding:0.5rem;text-align:center;">Stock</th>
                                 <th style="padding:0.5rem;text-align:center;">Min.</th>
                                 <th style="padding:0.5rem;text-align:center;">Needed</th>
+                                <th style="padding:0.5rem;text-align:center;">Suggest&nbsp;Qty</th>
                             </tr>
                         </thead>
                         <tbody>${rows}</tbody>
@@ -444,6 +563,26 @@ class StockAlertsService {
         });
 
         document.body.appendChild(modal);
+    }
+
+    enableStartupPOButton() {
+        const btn = document.getElementById('startup-po-btn');
+        if (!btn) return;
+        btn.disabled = false;
+        btn.style.background = '#2e7d32';
+        btn.style.cursor = 'pointer';
+        btn.style.opacity = '1';
+        const idsRaw = btn.dataset.productIds;
+        if (idsRaw) {
+            try {
+                const ids = JSON.parse(idsRaw);
+                btn.onclick = () => {
+                    window.appController?.openCreatePOForProducts(ids);
+                    document.getElementById('startup-stock-alert')?.remove();
+                };
+            } catch (_) {}
+        }
+        btn.innerHTML = btn.dataset.label || '<i class="fas fa-file-invoice"></i> Create Purchase Order';
     }
 }
 

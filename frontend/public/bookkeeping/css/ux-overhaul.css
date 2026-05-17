@@ -1,0 +1,824 @@
+/* ============================================================
+   UX OVERHAUL — Ultimate Bookkeeping
+   Source: UI/UX Pro Max Skill v2.5.0
+   Implements: skeleton loading · empty states · touch targets
+               form feedback · bento grid · micro-interactions
+               accessibility · dvh fix · overscroll contain
+   ============================================================ */
+
+/* ── 1. GLOBAL FOUNDATIONS ────────────────────────────────── */
+html {
+    scroll-behavior: smooth;
+}
+
+/* dvh replaces 100vh — handles mobile browser chrome correctly */
+.modal,
+#login-modal,
+#register-modal {
+    min-height: 100dvh;
+    min-height: 100vh; /* fallback */
+}
+
+/* Prevent pull-to-refresh on modal + table scroll containers */
+.modal,
+.modal-content,
+.table-container,
+#sales-list {
+    overscroll-behavior: contain;
+}
+
+/* Remove 300ms tap delay everywhere */
+html {
+    touch-action: manipulation;
+}
+
+/* ── 2. SKIP-TO-CONTENT LINK ──────────────────────────────── */
+.skip-link {
+    position: absolute;
+    top: -100%;
+    left: 1rem;
+    z-index: 99999;
+    background: var(--ds-brand, #1E3A8A);
+    color: #fff;
+    padding: 0.6rem 1.2rem;
+    border-radius: 0 0 var(--ds-radius, 12px) var(--ds-radius, 12px);
+    font-size: 0.875rem;
+    font-weight: 600;
+    text-decoration: none;
+    transition: top 0.15s;
+}
+.skip-link:focus {
+    top: 0;
+    outline: 3px solid var(--ds-accent, #A16207);
+    outline-offset: 2px;
+}
+
+/* ── 3. FOCUS RING — design-system-aware ─────────────────── */
+:focus-visible {
+    outline: 2px solid var(--ds-brand, #1E3A8A);
+    outline-offset: 3px;
+    border-radius: var(--ds-radius-sm, 6px);
+}
+
+/* Remove outline for mouse users, keep for keyboard */
+:focus:not(:focus-visible) {
+    outline: none;
+}
+
+/* ── 4. SECTION PAGE HEADER ───────────────────────────────── */
+.section-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    margin-bottom: 1.5rem;
+    padding-bottom: 1rem;
+    border-bottom: 1px solid var(--ds-card-border, #E2E8F0);
+}
+
+.section-header h2 {
+    margin-bottom: 0;
+    font-size: 1.25rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.section-header .section-actions {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+
+/* ── 5. BENTO GRID — DASHBOARD METRICS ───────────────────── */
+/* Replaces the generic auto-fit grid with a structured layout */
+.bento-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 1rem;
+    margin-bottom: 1.75rem;
+}
+
+@media (min-width: 640px)  { .bento-grid { grid-template-columns: repeat(2, 1fr); } }
+@media (min-width: 900px)  { .bento-grid { grid-template-columns: repeat(4, 1fr); } }
+@media (min-width: 1280px) { .bento-grid { grid-template-columns: repeat(4, 1fr); } }
+
+/* Primary KPI spans 2 columns on wide screens */
+.bento-grid .metric--primary {
+    grid-column: span 2;
+}
+
+@media (min-width: 900px) {
+    .bento-grid .metric--primary { grid-column: span 1; }
+}
+
+/* KPI trend indicator */
+.metric-trend {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.2rem;
+    font-size: 0.72rem;
+    font-weight: 600;
+    margin-top: 0.4rem;
+    padding: 0.15rem 0.45rem;
+    border-radius: var(--ds-radius-pill, 999px);
+}
+
+.metric-trend.up   { background: var(--ds-success-bg, #F0FDF4); color: var(--ds-success, #15803D); }
+.metric-trend.down { background: var(--ds-danger-bg,  #FEF2F2); color: var(--ds-danger,  #DC2626); }
+.metric-trend.flat { background: var(--ds-bg-muted,   #E8ECF1); color: var(--ds-fg-muted, #64748B); }
+
+/* ── 6. SKELETON LOADING ──────────────────────────────────── */
+@keyframes skeleton-pulse {
+    0%, 100% { opacity: 1; }
+    50%       { opacity: 0.4; }
+}
+
+.skeleton {
+    background: var(--ds-bg-muted, #E8ECF1);
+    border-radius: var(--ds-radius-sm, 6px);
+    animation: skeleton-pulse 1.6s ease-in-out infinite;
+    pointer-events: none;
+    user-select: none;
+}
+
+/* Skeleton table rows */
+.skeleton-row td {
+    padding: 0.9rem 1rem;
+}
+
+.skeleton-cell {
+    height: 14px;
+    border-radius: 4px;
+    background: var(--ds-bg-muted, #E8ECF1);
+    animation: skeleton-pulse 1.6s ease-in-out infinite;
+}
+
+.skeleton-cell--short  { width: 40%; }
+.skeleton-cell--medium { width: 65%; }
+.skeleton-cell--long   { width: 90%; }
+.skeleton-cell--badge  { width: 56px; height: 20px; border-radius: var(--ds-radius-pill, 999px); }
+
+/* Skeleton metric card */
+.metric.skeleton-metric .metric-label {
+    height: 10px;
+    width: 55%;
+    border-radius: 4px;
+    background: var(--ds-bg-muted, #E8ECF1);
+    animation: skeleton-pulse 1.6s ease-in-out infinite;
+    margin-bottom: 0.75rem;
+}
+
+.metric.skeleton-metric .metric-value {
+    height: 28px;
+    width: 70%;
+    border-radius: 6px;
+    background: var(--ds-bg-muted, #E8ECF1);
+    animation: skeleton-pulse 1.6s ease-in-out infinite;
+}
+
+/* ── 7. EMPTY STATES ──────────────────────────────────────── */
+.empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 3rem 1.5rem;
+    text-align: center;
+    gap: 0.75rem;
+}
+
+.empty-state__icon {
+    width: 64px;
+    height: 64px;
+    border-radius: var(--ds-radius-xl, 20px);
+    background: var(--ds-brand-light, rgba(30,58,138,0.08));
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.75rem;
+    color: var(--ds-brand, #1E3A8A);
+    margin-bottom: 0.25rem;
+    flex-shrink: 0;
+}
+
+.empty-state__title {
+    font-family: var(--ds-font-heading, 'Poppins', sans-serif);
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--ds-fg, #020617);
+    margin: 0;
+}
+
+.empty-state__desc {
+    font-size: 0.875rem;
+    color: var(--ds-fg-muted, #64748B);
+    max-width: 28ch;
+    line-height: 1.5;
+    margin: 0;
+}
+
+.empty-state__action {
+    margin-top: 0.5rem;
+    padding: 0.6rem 1.4rem;
+    font-size: 0.875rem;
+    font-weight: 600;
+    border-radius: var(--ds-radius, 12px);
+    background: var(--ds-brand, #1E3A8A);
+    color: #fff;
+    border: none;
+    cursor: pointer;
+    transition: opacity 0.15s, transform 0.15s;
+}
+
+.empty-state__action:hover {
+    opacity: 0.88;
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(30,58,138,0.25);
+}
+
+/* No-results variant (search/filter) */
+.empty-state--search .empty-state__icon {
+    background: var(--ds-bg-muted, #E8ECF1);
+    color: var(--ds-fg-muted, #64748B);
+}
+
+/* ── 8. FORM IMPROVEMENTS ─────────────────────────────────── */
+
+/* Field-level error state */
+.field-group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+}
+
+.field-group label {
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--ds-fg-muted, #64748B);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+}
+
+.field-error {
+    font-size: 0.78rem;
+    color: var(--ds-danger, #DC2626);
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+    margin-top: 0.15rem;
+    display: none; /* shown by JS via .has-error */
+}
+
+.field-group.has-error input,
+.field-group.has-error select,
+.field-group.has-error textarea {
+    border-color: var(--ds-danger, #DC2626);
+    box-shadow: 0 0 0 3px rgba(220,38,38,0.12);
+}
+
+.field-group.has-error .field-error {
+    display: flex;
+}
+
+/* Submit button loading state */
+button[data-loading="true"] {
+    position: relative;
+    color: transparent !important;
+    pointer-events: none;
+    opacity: 0.85;
+}
+
+button[data-loading="true"]::after {
+    content: '';
+    position: absolute;
+    width: 16px;
+    height: 16px;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    border: 2px solid rgba(255,255,255,0.4);
+    border-top-color: #fff;
+    border-radius: 50%;
+    animation: btn-spin 0.7s linear infinite;
+}
+
+@keyframes btn-spin {
+    to { transform: translate(-50%, -50%) rotate(360deg); }
+}
+
+/* ── 9. TOUCH TARGETS ─────────────────────────────────────── */
+/* Every interactive element must be ≥44×44px per skill rule */
+td.actions button,
+.table-action-btn {
+    min-width: 36px;
+    min-height: 36px;
+    padding: 0.45rem 0.6rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+/* 8px minimum gap between adjacent touch targets in tables */
+td.actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+/* Bottom nav items already 52px but ensure label contrast */
+.bottom-nav-item {
+    min-height: 52px;
+    min-width: 44px;
+    font-size: 0.68rem;
+    letter-spacing: 0.02em;
+    color: rgba(255,255,255,0.55);
+}
+
+.bottom-nav-item.active {
+    color: var(--ds-brand, #1E3A8A);
+}
+
+[data-theme="classic"] .bottom-nav-item.active,
+[data-theme="corporate"] .bottom-nav-item.active {
+    color: #60A5FA;
+}
+
+/* ── 10. FILTER BAR ───────────────────────────────────────── */
+.filter-bar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.6rem;
+    align-items: center;
+    padding: 0.85rem 1rem;
+    background: var(--ds-bg-muted, #E8ECF1);
+    border-radius: var(--ds-radius, 12px);
+    margin-bottom: 1rem;
+    border: 1px solid var(--ds-card-border, #E2E8F0);
+}
+
+.filter-bar input,
+.filter-bar select {
+    flex: 1 1 180px;
+    min-width: 0;
+    background: var(--ds-card, #FFFFFF);
+    border-radius: var(--ds-radius-sm, 6px);
+    border: 1.5px solid var(--ds-card-border, #E2E8F0);
+    padding: 0.55rem 0.85rem;
+    font-size: 0.875rem;
+    height: 40px;
+}
+
+.filter-bar input:focus,
+.filter-bar select:focus {
+    border-color: var(--ds-brand, #1E3A8A);
+    box-shadow: 0 0 0 3px var(--ds-brand-light, rgba(30,58,138,0.08));
+    outline: none;
+}
+
+.filter-bar .filter-divider {
+    width: 1px;
+    height: 24px;
+    background: var(--ds-card-border, #E2E8F0);
+    flex-shrink: 0;
+}
+
+/* ── 11. MOBILE TABLE → CARD LAYOUT ──────────────────────── */
+/* On mobile, data tables flip to stacked cards (skill: Table Handling) */
+@media (max-width: 600px) {
+    .table-cards thead {
+        display: none;
+    }
+
+    .table-cards,
+    .table-cards tbody,
+    .table-cards tr {
+        display: block;
+        width: 100%;
+    }
+
+    .table-cards tr {
+        background: var(--ds-card, #FFFFFF);
+        border: 1px solid var(--ds-card-border, #E2E8F0);
+        border-radius: var(--ds-radius, 12px);
+        margin-bottom: 0.65rem;
+        padding: 0.85rem 1rem;
+        box-shadow: var(--ds-shadow-sm, 0 1px 3px rgba(15,23,42,0.08));
+    }
+
+    .table-cards td {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 0.35rem 0;
+        border: none;
+        font-size: 0.875rem;
+        min-height: 0;
+        white-space: normal;
+    }
+
+    .table-cards td::before {
+        content: attr(data-label);
+        font-size: 0.72rem;
+        font-weight: 600;
+        color: var(--ds-fg-muted, #64748B);
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        flex-shrink: 0;
+        margin-right: 0.75rem;
+    }
+
+    .table-cards td.actions {
+        justify-content: flex-end;
+        padding-top: 0.65rem;
+        margin-top: 0.35rem;
+        border-top: 1px solid var(--ds-card-border, #E2E8F0);
+        gap: 0.5rem;
+    }
+
+    .table-cards td.actions::before {
+        display: none;
+    }
+
+    /* Keep non-table-cards tables horizontally scrollable */
+    .table-container:not(.table-cards-container) {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+    }
+}
+
+/* ── 12. MICRO-INTERACTIONS ───────────────────────────────── */
+
+/* Nav items — transform only, no background-color animation layout cost */
+nav ul li {
+    transform: translateZ(0); /* GPU layer */
+    will-change: transform;
+}
+
+/* Card hover — subtle lift using transform (not box-shadow size change) */
+.card {
+    will-change: transform;
+}
+
+.card:hover {
+    transform: translateY(-1px);
+}
+
+/* Metric card hover */
+.metric {
+    will-change: transform;
+}
+
+/* Alert item — horizontal slide instead of scale */
+.alert-item {
+    transition:
+        transform var(--ds-duration-fast, 0.15s) var(--ds-ease, cubic-bezier(0.4,0,0.2,1)),
+        box-shadow var(--ds-duration-fast, 0.15s) var(--ds-ease, cubic-bezier(0.4,0,0.2,1));
+}
+
+.alert-item:hover {
+    transform: translateX(4px);
+}
+
+/* Table rows — opacity + background, not layout properties */
+tbody tr {
+    transition: background var(--ds-duration-fast, 0.15s) var(--ds-ease, cubic-bezier(0.4,0,0.2,1));
+}
+
+/* Modal entrance — spring in, ease-in out */
+@keyframes modalEnter {
+    from { opacity: 0; transform: translateY(12px) scale(0.98); }
+    to   { opacity: 1; transform: translateY(0)   scale(1);    }
+}
+
+@keyframes modalExit {
+    from { opacity: 1; transform: translateY(0)   scale(1);    }
+    to   { opacity: 0; transform: translateY(8px)  scale(0.99); }
+}
+
+.modal-content {
+    animation: modalEnter 0.25s cubic-bezier(0.34,1.56,0.64,1) forwards;
+}
+
+.modal.closing .modal-content {
+    animation: modalExit 0.18s cubic-bezier(0.4,0,1,1) forwards;
+}
+
+/* Toast slide-in from bottom-right */
+@keyframes toastSlide {
+    from { opacity: 0; transform: translateX(12px); }
+    to   { opacity: 1; transform: translateX(0); }
+}
+
+.toast {
+    animation: toastSlide 0.22s cubic-bezier(0.34,1.56,0.64,1) forwards;
+}
+
+/* ── 13. CONFIRMATION DIALOG UPGRADE ─────────────────────── */
+/* Replaces bare browser confirm() with styled in-page dialog  */
+.confirm-dialog-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(15,23,42,0.55);
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+    z-index: 9990;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    animation: fadeIn 0.15s ease-out;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+}
+
+.confirm-dialog {
+    background: var(--ds-card, #FFFFFF);
+    border-radius: var(--ds-radius-xl, 20px);
+    box-shadow: var(--ds-shadow-xl, 0 40px 60px rgba(15,23,42,0.18));
+    border: 1px solid var(--ds-card-border, #E2E8F0);
+    padding: 1.75rem 1.75rem 1.5rem;
+    width: 90%;
+    max-width: 380px;
+    animation: modalEnter 0.25s cubic-bezier(0.34,1.56,0.64,1) forwards;
+}
+
+.confirm-dialog__icon {
+    width: 48px;
+    height: 48px;
+    border-radius: 14px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.35rem;
+    margin-bottom: 1rem;
+}
+
+.confirm-dialog__icon--danger {
+    background: var(--ds-danger-bg, #FEF2F2);
+    color: var(--ds-danger, #DC2626);
+}
+
+.confirm-dialog__icon--warning {
+    background: var(--ds-warning-bg, #FFFBEB);
+    color: var(--ds-warning, #B45309);
+}
+
+.confirm-dialog__title {
+    font-family: var(--ds-font-heading, 'Poppins', sans-serif);
+    font-size: 1rem;
+    font-weight: 700;
+    color: var(--ds-fg, #020617);
+    margin: 0 0 0.4rem;
+}
+
+.confirm-dialog__body {
+    font-size: 0.875rem;
+    color: var(--ds-fg-muted, #64748B);
+    line-height: 1.5;
+    margin: 0 0 1.5rem;
+}
+
+.confirm-dialog__actions {
+    display: flex;
+    gap: 0.6rem;
+    justify-content: flex-end;
+}
+
+.confirm-dialog__actions button {
+    padding: 0.6rem 1.25rem;
+    font-size: 0.875rem;
+    border-radius: var(--ds-radius, 12px);
+    min-width: 80px;
+}
+
+.confirm-dialog__cancel {
+    background: var(--ds-bg-muted, #E8ECF1) !important;
+    color: var(--ds-fg-muted, #64748B) !important;
+    box-shadow: none !important;
+}
+
+.confirm-dialog__cancel:hover {
+    background: var(--ds-card-border, #E2E8F0) !important;
+    transform: none !important;
+    box-shadow: none !important;
+}
+
+.confirm-dialog__confirm--danger {
+    background: var(--ds-danger, #DC2626) !important;
+}
+
+/* ── 14. ACCESSIBILITY FIXES ──────────────────────────────── */
+
+/* High contrast focus — strong ring on all interactive elements */
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+a:focus-visible,
+[tabindex]:focus-visible {
+    outline: 2px solid var(--ds-brand, #1E3A8A);
+    outline-offset: 3px;
+}
+
+/* Visually hidden (for sr-only labels) */
+.sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0,0,0,0);
+    white-space: nowrap;
+    border: 0;
+}
+
+/* aria-live region for dynamic content updates */
+.live-region {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0,0,0,0);
+}
+
+/* Heading hierarchy — section h2 always below app h1 */
+section > .card > h2 {
+    font-size: 1.25rem;
+}
+
+section > .card > h2 + .card h3,
+section > .card h3 {
+    font-size: 1rem;
+}
+
+/* ── 15. SEARCH NO-RESULTS STATE ──────────────────────────── */
+.search-no-results {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 1rem 1.25rem;
+    background: var(--ds-bg-muted, #E8ECF1);
+    border-radius: var(--ds-radius, 12px);
+    font-size: 0.875rem;
+    color: var(--ds-fg-muted, #64748B);
+}
+
+.search-no-results i {
+    color: var(--ds-fg-subtle, #94A3B8);
+    font-size: 1.1rem;
+    flex-shrink: 0;
+}
+
+.search-no-results strong {
+    color: var(--ds-fg, #020617);
+}
+
+/* ── 16. BULK ACTION BAR ──────────────────────────────────── */
+.bulk-action-bar {
+    display: none; /* shown when rows are selected */
+    position: sticky;
+    bottom: 0;
+    z-index: 50;
+    background: var(--ds-primary, #0F172A);
+    color: #FFFFFF;
+    padding: 0.85rem 1.25rem;
+    border-radius: var(--ds-radius, 12px) var(--ds-radius, 12px) 0 0;
+    align-items: center;
+    gap: 0.75rem;
+    box-shadow: 0 -4px 20px rgba(15,23,42,0.2);
+    animation: slideUp 0.2s cubic-bezier(0.34,1.56,0.64,1) forwards;
+}
+
+.bulk-action-bar.visible {
+    display: flex;
+}
+
+@keyframes slideUp {
+    from { transform: translateY(100%); opacity: 0; }
+    to   { transform: translateY(0);    opacity: 1; }
+}
+
+.bulk-action-bar__count {
+    font-size: 0.875rem;
+    font-weight: 600;
+    flex: 1;
+}
+
+.bulk-action-bar button {
+    padding: 0.5rem 1rem;
+    font-size: 0.8rem;
+    border-radius: var(--ds-radius-sm, 6px);
+    background: rgba(255,255,255,0.12);
+    color: #FFFFFF;
+    border: 1px solid rgba(255,255,255,0.15);
+}
+
+.bulk-action-bar button:hover {
+    background: rgba(255,255,255,0.2);
+    box-shadow: none;
+    transform: none;
+}
+
+.bulk-action-bar button.danger {
+    background: var(--ds-danger, #DC2626) !important;
+    border-color: transparent;
+}
+
+/* ── 17. HAPTIC FEEDBACK (PWA) ────────────────────────────── */
+/* Applied via JS: navigator.vibrate(10) on money actions */
+/* This class marks elements that should trigger vibration */
+[data-haptic] {
+    -webkit-tap-highlight-color: transparent;
+}
+
+/* ── 18. SMOOTH SCROLL COMPENSATION ──────────────────────── */
+/* Sticky nav occludes scroll targets — compensate with offset */
+section[id] {
+    scroll-margin-top: 60px; /* approx nav height */
+}
+
+/* ── 19. PAGINATION UX ────────────────────────────────────── */
+.pagination {
+    gap: 0.35rem;
+}
+
+.pagination button {
+    min-width: 36px;
+    min-height: 36px;
+    font-size: 0.8rem;
+}
+
+/* ── 20. DARK THEME ADJUSTMENTS ───────────────────────────── */
+[data-theme="dark"] .filter-bar,
+[data-theme="modern"] .filter-bar {
+    background: var(--ds-bg-muted);
+    border-color: var(--ds-card-border);
+}
+
+[data-theme="dark"] .filter-bar input,
+[data-theme="dark"] .filter-bar select,
+[data-theme="modern"] .filter-bar input,
+[data-theme="modern"] .filter-bar select {
+    background: var(--ds-card);
+    color: var(--ds-fg);
+    border-color: var(--ds-card-border);
+}
+
+[data-theme="dark"] .table-cards tr,
+[data-theme="modern"] .table-cards tr {
+    background: var(--ds-card);
+    border-color: var(--ds-card-border);
+}
+
+[data-theme="dark"] .empty-state__icon,
+[data-theme="modern"] .empty-state__icon {
+    background: var(--ds-brand-light);
+}
+
+[data-theme="dark"] .confirm-dialog,
+[data-theme="modern"] .confirm-dialog {
+    background: var(--ds-card);
+    border-color: var(--ds-card-border);
+}
+
+[data-theme="dark"] .confirm-dialog__cancel,
+[data-theme="modern"] .confirm-dialog__cancel {
+    background: var(--ds-bg-muted) !important;
+    color: var(--ds-fg-muted) !important;
+}
+
+[data-theme="dark"] .skeleton,
+[data-theme="dark"] .skeleton-cell,
+[data-theme="modern"] .skeleton,
+[data-theme="modern"] .skeleton-cell {
+    background: var(--ds-bg-muted);
+}
+
+/* ── 21. REDUCED MOTION — all overrides ───────────────────── */
+@media (prefers-reduced-motion: reduce) {
+    html { scroll-behavior: auto; }
+
+    .skeleton,
+    .skeleton-cell,
+    .metric.skeleton-metric .metric-label,
+    .metric.skeleton-metric .metric-value {
+        animation: none;
+        opacity: 0.6;
+    }
+
+    .modal-content        { animation: none; }
+    .confirm-dialog       { animation: none; }
+    .toast                { animation: none; }
+    .bulk-action-bar      { animation: none; }
+    button[data-loading="true"]::after { animation: none; opacity: 1; }
+
+    .card:hover,
+    .metric:hover,
+    .alert-item:hover { transform: none; }
+}

@@ -192,6 +192,7 @@
     display: flex;
     gap: 0.75rem;
     align-items: center;
+    flex-wrap: wrap;
 }
 
 .control-btn {
@@ -233,6 +234,44 @@
     background-repeat: no-repeat;
     background-position: right 0.75rem center;
     min-width: 140px;
+}
+
+/* Mobile: prevent header controls overflow (date + outlet filter + buttons) */
+@media (max-width: 600px) {
+    .dashboard-header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 0.75rem;
+    }
+
+    .dashboard-controls {
+        width: 100%;
+        gap: 0.5rem;
+    }
+
+    .dashboard-controls .enhanced-filter {
+        flex: 1 1 100%;
+        width: 100%;
+        min-width: 0;
+    }
+
+    .dashboard-theme-picker,
+    .ask-ai-btn {
+        flex: 1 1 100%;
+        width: 100%;
+    }
+
+    .theme-picker-btn,
+    .ask-ai-btn {
+        width: 100%;
+        justify-content: center;
+    }
+
+    .theme-picker-dropdown {
+        right: 0;
+        left: 0;
+        min-width: 0;
+    }
 }
 
 .enhanced-filter:focus {

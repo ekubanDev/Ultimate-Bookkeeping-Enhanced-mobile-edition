@@ -1,0 +1,4 @@
+# Optional: Model Context Protocol server (mcp_server.py).
+# Install in a separate venv if your API venv must keep FastAPI's Starlette pin:
+#   python3 -m venv .venv-mcp && .venv-mcp/bin/pip install -r requirements-mcp.txt
+mcp>=1.2.0

@@ -62,7 +62,12 @@ class ProfitAnalysisService {
             return sum + discounted * (1 + tax / 100);
         }, 0);
 
-        const totalCostOfGoodsSold = totalQuantitySold * cost;
+        // Use sale-time cost snapshot per sale; fall back to current product.cost
+        const totalCostOfGoodsSold = productSales.reduce((sum, s) => {
+            const qty = parseFloat(s.quantity) || 0;
+            const snapshot = parseFloat(s.cost);
+            return sum + qty * (Number.isFinite(snapshot) && snapshot > 0 ? snapshot : cost);
+        }, 0);
         const realizedProfit = totalRevenue - totalCostOfGoodsSold;
 
         // Inventory value
@@ -370,7 +375,7 @@ class ProfitAnalysisService {
     /**
      * Export profit analysis to CSV
      */
-    exportToCSV() {
+    async exportToCSV() {
         const analysis = this.getAllProductsAnalysis();
         const headers = [
             'Product Name', 'Category', 'Cost', 'Price', 'Gross Profit', 
@@ -394,7 +399,7 @@ class ProfitAnalysisService {
             p.profitability
         ]);
 
-        Utils.exportToCSV([headers, ...rows], 'profit-analysis.csv');
+        await Utils.exportToCSV([headers, ...rows], 'profit-analysis.csv');
     }
 }
 

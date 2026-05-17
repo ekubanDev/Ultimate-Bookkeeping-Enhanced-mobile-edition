@@ -5,6 +5,12 @@
 
 import { state } from '../utils/state.js';
 import { Utils } from '../utils/utils.js';
+import {
+    sharePdfBlobBestEffort,
+    downloadPdfBlobInBrowser,
+    PDF_SHARE_UNAVAILABLE,
+} from '../utils/native-pdf-save.js';
+import { isDebtPayment, getSaleTotal } from '../utils/accounting.js';
 
 class PDFExportService {
     constructor() {
@@ -16,23 +22,10 @@ class PDFExportService {
         return 'GHS ' + (parseFloat(amount) || 0).toFixed(2);
     }
 
-    isDebtPayment(e) {
-        const type = (e.expenseType || '').toLowerCase();
-        const cat = (e.category || '').toLowerCase();
-        return type === 'liability_payment' || cat === 'debt payment' || cat === 'loan repayment';
-    }
+    isDebtPayment(e) { return isDebtPayment(e); }
 
     /** Compute revenue for one sale: use s.total if valid, else derive from quantity/price/discount/tax. */
-    getSaleTotal(s) {
-        const explicit = parseFloat(s.total);
-        if (!Number.isNaN(explicit)) return explicit;
-        const qty = parseFloat(s.quantity) || 0;
-        const price = parseFloat(s.price) || 0;
-        const discount = parseFloat(s.discount) || 0;
-        const tax = parseFloat(s.tax) || 0;
-        const subtotal = qty * price;
-        const discounted = subtotal * (1 - discount / 100);
-        return discounted * (1 + tax / 100);
+    getSaleTotal(s) { return getSaleTotal(s);
     }
 
     /**
@@ -66,6 +59,63 @@ class PDFExportService {
         });
 
         return this._loadingPromise;
+    }
+
+    /**
+     * jsPDF doc.save() triggers blob URLs — iOS WKWebView cannot open them (NSOSStatus -10814).
+     * On Capacitor, write to Documents and show the system share sheet.
+     */
+    async savePdfOutput(doc, fileName, shareTitle, successToast) {
+        const safeName = String(fileName).replace(/[^a-zA-Z0-9._-]/g, '_');
+        if (typeof Utils !== 'undefined' && Utils.showToast) {
+            Utils.showToast('Preparing PDF…', 'info');
+        }
+        const blob = doc.output('blob');
+
+        try {
+            await sharePdfBlobBestEffort(
+                blob,
+                safeName,
+                shareTitle,
+                'Save to Files or share this PDF'
+            );
+            Utils.showToast(successToast, 'success');
+            return;
+        } catch (e) {
+            if (e && (e.name === 'AbortError' || String(e.message || '').toLowerCase().includes('abort'))) {
+                return;
+            }
+            const msg = String(e && e.message ? e.message : e).toLowerCase();
+            if (msg.includes('cancel') || msg.includes('dismiss')) return;
+
+            if (e && (e.code === PDF_SHARE_UNAVAILABLE || e.message === PDF_SHARE_UNAVAILABLE)) {
+                try {
+                    downloadPdfBlobInBrowser(blob, fileName);
+                    Utils.showToast(successToast, 'success');
+                    return;
+                } catch (dlErr) {
+                    console.warn('PDF download fallback failed:', dlErr);
+                }
+            } else {
+                console.warn('PDF share failed, trying download:', e);
+                try {
+                    downloadPdfBlobInBrowser(blob, fileName);
+                    Utils.showToast(successToast, 'success');
+                    return;
+                } catch (dlErr) {
+                    /* fall through to doc.save */
+                }
+            }
+        }
+
+        try {
+            doc.save(fileName);
+            Utils.showToast(successToast, 'success');
+        } catch (finalErr) {
+            console.error('PDF save failed:', finalErr);
+            Utils.showToast('Could not save PDF. Try updating the app or use Share from the report screen.', 'error');
+            throw finalErr;
+        }
     }
 
     /**
@@ -119,11 +169,129 @@ class PDFExportService {
             // Footer
             this.addFooter(doc);
 
-            // Save
-            doc.save(`sales-report-${new Date().toISOString().split('T')[0]}.pdf`);
-            Utils.showToast('Sales report downloaded', 'success');
+            await this.savePdfOutput(
+                doc,
+                `sales-report-${new Date().toISOString().split('T')[0]}.pdf`,
+                'Sales Report',
+                'Sales report downloaded'
+            );
         } catch (error) {
             console.error('Error generating PDF:', error);
+            Utils.showToast('Failed to generate PDF: ' + error.message, 'error');
+        }
+    }
+
+    /**
+     * Product sale history: per-product totals, then all lines grouped by product (A–Z) and date.
+     */
+    async generateProductSaleHistoryPdf(dateRange = {}) {
+        try {
+            await this.loadJSPDF();
+            const { jsPDF } = window.jspdf;
+            const doc = new jsPDF();
+
+            let sales = [...(state.allSales || [])];
+            if (dateRange.start) {
+                sales = sales.filter((s) => (s.date || '') >= dateRange.start);
+            }
+            if (dateRange.end) {
+                sales = sales.filter((s) => (s.date || '') <= dateRange.end);
+            }
+
+            const productOf = (s) => {
+                const n = String(s.product || s.productName || '').trim();
+                return n || 'Unknown';
+            };
+
+            this.addHeader(doc, 'Product Sale History');
+            this.addDateRange(doc, dateRange);
+
+            if (sales.length === 0) {
+                doc.setFontSize(11);
+                doc.text('No sales records in this period.', 14, 52);
+                this.addFooter(doc);
+                await this.savePdfOutput(
+                    doc,
+                    `product-sale-history-${new Date().toISOString().split('T')[0]}.pdf`,
+                    'Product Sale History',
+                    'Product sale history downloaded'
+                );
+                return;
+            }
+
+            const summaryMap = new Map();
+            for (const s of sales) {
+                const p = productOf(s);
+                const line = this.getSaleTotal(s);
+                const qty = parseInt(s.quantity, 10) || 0;
+                if (!summaryMap.has(p)) {
+                    summaryMap.set(p, { qty: 0, revenue: 0, lines: 0 });
+                }
+                const agg = summaryMap.get(p);
+                agg.qty += qty;
+                agg.revenue += line;
+                agg.lines += 1;
+            }
+
+            const totalRevenue = sales.reduce((sum, s) => sum + this.getSaleTotal(s), 0);
+            const uniqueProducts = summaryMap.size;
+
+            doc.setFontSize(11);
+            doc.setFont(undefined, 'normal');
+            const statsY = dateRange.start || dateRange.end ? 52 : 48;
+            doc.text(
+                `Products with sales: ${uniqueProducts}  |  Line items: ${sales.length}  |  Total revenue: ${this.formatGHS(totalRevenue)}`,
+                14,
+                statsY
+            );
+
+            const summaryBody = [...summaryMap.entries()]
+                .sort((a, b) => a[0].localeCompare(b[0]))
+                .map(([name, agg]) => [name, String(agg.lines), String(agg.qty), this.formatGHS(agg.revenue)]);
+
+            doc.autoTable({
+                startY: statsY + 10,
+                head: [['Product', 'Sale lines', 'Qty sold', 'Revenue (GHS)']],
+                body: summaryBody,
+                styles: { fontSize: 8 },
+                headStyles: { fillColor: [0, 123, 255] },
+            });
+
+            const sortedDetail = [...sales].sort((a, b) => {
+                const cmp = productOf(a).localeCompare(productOf(b));
+                if (cmp !== 0) return cmp;
+                return String(a.date || '').localeCompare(String(b.date || ''));
+            });
+
+            const detailBody = sortedDetail.map((s) => [
+                String(s.date || '').slice(0, 10),
+                productOf(s),
+                s.customer || s.customerName || 'Walk-in',
+                String(parseInt(s.quantity, 10) || 0),
+                this.formatGHS(s.price),
+                this.formatGHS(this.getSaleTotal(s)),
+            ]);
+
+            const nextY = doc.lastAutoTable.finalY + 12;
+            doc.setFontSize(10);
+            doc.text('Detail (by product, then date)', 14, nextY);
+            doc.autoTable({
+                startY: nextY + 4,
+                head: [['Date', 'Product', 'Customer', 'Qty', 'Unit price (GHS)', 'Line total (GHS)']],
+                body: detailBody,
+                styles: { fontSize: 7 },
+                headStyles: { fillColor: [40, 167, 69] },
+            });
+
+            this.addFooter(doc);
+            await this.savePdfOutput(
+                doc,
+                `product-sale-history-${new Date().toISOString().split('T')[0]}.pdf`,
+                'Product Sale History',
+                'Product sale history downloaded'
+            );
+        } catch (error) {
+            console.error('Error generating product sale history PDF:', error);
             Utils.showToast('Failed to generate PDF: ' + error.message, 'error');
         }
     }
@@ -183,8 +351,12 @@ class PDFExportService {
             });
 
             this.addFooter(doc);
-            doc.save(`inventory-report-${new Date().toISOString().split('T')[0]}.pdf`);
-            Utils.showToast('Inventory report downloaded', 'success');
+            await this.savePdfOutput(
+                doc,
+                `inventory-report-${new Date().toISOString().split('T')[0]}.pdf`,
+                'Inventory Report',
+                'Inventory report downloaded'
+            );
         } catch (error) {
             console.error('Error generating PDF:', error);
             Utils.showToast('Failed to generate PDF: ' + error.message, 'error');
@@ -319,8 +491,12 @@ class PDFExportService {
             });
 
             this.addFooter(doc);
-            doc.save(`financial-statement-${new Date().toISOString().split('T')[0]}.pdf`);
-            Utils.showToast('Financial statement downloaded', 'success');
+            await this.savePdfOutput(
+                doc,
+                `financial-statement-${new Date().toISOString().split('T')[0]}.pdf`,
+                'Financial Statement',
+                'Financial statement downloaded'
+            );
         } catch (error) {
             console.error('Error generating PDF:', error);
             Utils.showToast('Failed to generate PDF: ' + error.message, 'error');
@@ -416,8 +592,12 @@ class PDFExportService {
             });
 
             this.addFooter(doc);
-            doc.save(`profit-loss-${new Date().toISOString().split('T')[0]}.pdf`);
-            Utils.showToast('P&L report downloaded', 'success');
+            await this.savePdfOutput(
+                doc,
+                `profit-loss-${new Date().toISOString().split('T')[0]}.pdf`,
+                'Profit & Loss Report',
+                'P&L report downloaded'
+            );
         } catch (error) {
             console.error('Error generating PDF:', error);
             Utils.showToast('Failed to generate PDF: ' + error.message, 'error');
@@ -591,8 +771,12 @@ class PDFExportService {
                 );
             }
 
-            doc.save(`supplier-payment-history-${new Date().toISOString().split('T')[0]}.pdf`);
-            Utils.showToast('Supplier payment history downloaded', 'success');
+            await this.savePdfOutput(
+                doc,
+                `supplier-payment-history-${new Date().toISOString().split('T')[0]}.pdf`,
+                'Supplier Payment History',
+                'Supplier payment history downloaded'
+            );
         } catch (error) {
             console.error('Error generating supplier payment history PDF:', error);
             Utils.showToast('Failed to generate PDF: ' + error.message, 'error');
@@ -776,8 +960,12 @@ class PDFExportService {
                 );
             }
 
-            doc.save(`PO-${po.poNumber || po.id}-${new Date().toISOString().split('T')[0]}.pdf`);
-            Utils.showToast('Purchase order exported to PDF', 'success');
+            await this.savePdfOutput(
+                doc,
+                `PO-${po.poNumber || po.id}-${new Date().toISOString().split('T')[0]}.pdf`,
+                'Purchase Order',
+                'Purchase order exported to PDF'
+            );
         } catch (error) {
             console.error('Error generating PO PDF:', error);
             Utils.showToast('Failed to generate PDF: ' + error.message, 'error');
@@ -852,8 +1040,12 @@ class PDFExportService {
             });
 
             this.addFooter(doc);
-            doc.save(`expenses-report-${new Date().toISOString().split('T')[0]}.pdf`);
-            Utils.showToast('Expenses report downloaded', 'success');
+            await this.savePdfOutput(
+                doc,
+                `expenses-report-${new Date().toISOString().split('T')[0]}.pdf`,
+                'Expenses Report',
+                'Expenses report downloaded'
+            );
         } catch (error) {
             console.error('Error generating expenses PDF:', error);
             Utils.showToast('Failed to generate PDF: ' + error.message, 'error');
@@ -972,8 +1164,12 @@ class PDFExportService {
             }
 
             this.addFooter(doc);
-            doc.save(`cashflow-statement-${new Date().toISOString().split('T')[0]}.pdf`);
-            Utils.showToast('Cash flow statement downloaded', 'success');
+            await this.savePdfOutput(
+                doc,
+                `cashflow-statement-${new Date().toISOString().split('T')[0]}.pdf`,
+                'Cash Flow Statement',
+                'Cash flow statement downloaded'
+            );
         } catch (error) {
             console.error('Error generating cash flow PDF:', error);
             Utils.showToast('Failed to generate PDF: ' + error.message, 'error');
@@ -1088,8 +1284,12 @@ class PDFExportService {
             }
 
             this.addFooter(doc);
-            doc.save(`tax-report-${new Date().toISOString().split('T')[0]}.pdf`);
-            Utils.showToast('Tax report downloaded', 'success');
+            await this.savePdfOutput(
+                doc,
+                `tax-report-${new Date().toISOString().split('T')[0]}.pdf`,
+                'Tax Report',
+                'Tax report downloaded'
+            );
         } catch (error) {
             console.error('Error generating tax PDF:', error);
             Utils.showToast('Failed to generate PDF: ' + error.message, 'error');
@@ -1181,8 +1381,12 @@ class PDFExportService {
             }
 
             this.addFooter(doc);
-            doc.save(`ar-aging-report-${new Date().toISOString().split('T')[0]}.pdf`);
-            Utils.showToast('AR aging report downloaded', 'success');
+            await this.savePdfOutput(
+                doc,
+                `ar-aging-report-${new Date().toISOString().split('T')[0]}.pdf`,
+                'AR Aging Report',
+                'AR aging report downloaded'
+            );
         } catch (error) {
             console.error('Error generating AR aging PDF:', error);
             Utils.showToast('Failed to generate PDF: ' + error.message, 'error');
@@ -1241,8 +1445,12 @@ class PDFExportService {
             });
 
             this.addFooter(doc);
-            doc.save(`statement-${(customer.name || 'customer').replace(/\s+/g, '-')}-${new Date().toISOString().split('T')[0]}.pdf`);
-            Utils.showToast('Customer statement downloaded', 'success');
+            await this.savePdfOutput(
+                doc,
+                `statement-${(customer.name || 'customer').replace(/\s+/g, '-')}-${new Date().toISOString().split('T')[0]}.pdf`,
+                `Statement — ${customer.name || 'Customer'}`,
+                'Customer statement downloaded'
+            );
         } catch (error) {
             console.error('Error generating customer statement PDF:', error);
             Utils.showToast('Failed to generate PDF: ' + error.message, 'error');
@@ -1321,8 +1529,12 @@ class PDFExportService {
             });
 
             this.addFooter(doc);
-            doc.save(`stock-valuation-${new Date().toISOString().split('T')[0]}.pdf`);
-            Utils.showToast('Stock valuation report downloaded', 'success');
+            await this.savePdfOutput(
+                doc,
+                `stock-valuation-${new Date().toISOString().split('T')[0]}.pdf`,
+                'Stock Valuation Report',
+                'Stock valuation report downloaded'
+            );
         } catch (error) {
             console.error('Error generating stock valuation PDF:', error);
             Utils.showToast('Failed to generate PDF: ' + error.message, 'error');
@@ -1378,6 +1590,9 @@ class PDFExportService {
                     <button onclick="pdfExport.handleExport('stock-valuation')" class="export-btn">
                         <i class="fas fa-warehouse"></i> Stock Valuation
                     </button>
+                    <button onclick="pdfExport.handleExport('product-sale-history')" class="export-btn">
+                        <i class="fas fa-history"></i> Product sale history
+                    </button>
                 </div>
             </div>
         `;
@@ -1405,6 +1620,7 @@ class PDFExportService {
             case 'tax': this.generateTaxReport(dateRange); break;
             case 'ar-aging': this.generateARAgingReport(); break;
             case 'stock-valuation': this.generateStockValuationReport(); break;
+            case 'product-sale-history': this.generateProductSaleHistoryPdf(dateRange); break;
         }
 
         document.getElementById('pdf-export-modal')?.remove();
