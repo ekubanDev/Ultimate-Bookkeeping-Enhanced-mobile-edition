@@ -1643,6 +1643,65 @@ async def send_report_now(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ── Cloud Scheduler trigger endpoints ────────────────────────────────────────
+# Called by Google Cloud Scheduler, not by the frontend.
+# Secured by a CRON_SECRET env var checked against the Authorization header.
+# Route: POST /api/internal/trigger/{report_type}
+#         report_type: daily | weekly | monthly | stock_alert
+
+_CRON_SECRET = os.environ.get("CRON_SECRET", "")
+
+
+def _verify_cron_secret(authorization: Optional[str]):
+    if not _CRON_SECRET:
+        raise HTTPException(status_code=503, detail="CRON_SECRET not configured on server")
+    token = (authorization or "").removeprefix("Bearer ").strip()
+    if token != _CRON_SECRET:
+        raise HTTPException(status_code=401, detail="Invalid cron secret")
+
+
+@api_router.post("/internal/trigger/{report_type}")
+async def cron_trigger(report_type: str, authorization: Optional[str] = Header(None)):
+    _verify_cron_secret(authorization)
+
+    if report_type not in ("daily", "weekly", "monthly", "stock_alert"):
+        raise HTTPException(status_code=400, detail=f"Unknown report_type: {report_type}")
+
+    if not ensure_firebase_admin_app():
+        raise HTTPException(status_code=503, detail="Firebase not available")
+
+    from ai_accountant import _get_firestore
+    from scheduler import _all_user_prefs, _send_report_for_user, _stock_alert_job
+
+    db = _get_firestore()
+    if not db:
+        raise HTTPException(status_code=503, detail="Firestore not available")
+
+    if report_type == "stock_alert":
+        await _stock_alert_job()
+        return {"status": "ok", "report_type": report_type}
+
+    user_prefs = _all_user_prefs(db)
+    pref_key   = f"{report_type}_enabled"
+    sent, skipped = 0, 0
+
+    import asyncio
+    tasks = []
+    for uid, prefs in user_prefs:
+        if prefs.get(pref_key):
+            tasks.append(_send_report_for_user(uid, prefs, report_type, db))
+        else:
+            skipped += 1
+
+    if tasks:
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        sent = sum(1 for r in results if r is not True and not isinstance(r, Exception))
+        sent = len(tasks)  # count attempted; errors are logged inside _send_report_for_user
+
+    logger.info("cron_trigger: %s — sent=%d skipped=%d", report_type, sent, skipped)
+    return {"status": "ok", "report_type": report_type, "sent": sent, "skipped": skipped}
+
+
 @api_router.post("/metrics/events")
 async def ingest_metrics_event(request: MetricsEventRequest):
     """

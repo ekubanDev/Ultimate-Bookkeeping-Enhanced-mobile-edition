@@ -77,54 +77,55 @@ def _build_cost_map(db) -> dict:
     return cost_map
 
 
-def _fetch_sales(db, uid: str, start: datetime, end: datetime) -> list:
+def _fetch_root_collection(db, uid: str, name: str, start: datetime, end: datetime) -> list:
+    """
+    Three-strategy fetch matching the frontend's unfiltered collection read.
+    Strategy 3 is intentionally unfiltered (matches frontend loadSales/loadExpenses
+    which call collection(db, name) with no createdBy filter).
+    _merge via seen-set deduplicates across strategies.
+    """
     seen: set = set()
     results = []
-    strategies = [
-        lambda: db.collection("users").document(uid).collection("sales").stream(),
-        lambda: db.collection("sales").where("createdBy", "==", uid).stream(),
-        lambda: db.collection("sales").stream(),
-    ]
-    for fetch in strategies:
-        try:
-            for doc in fetch():
-                if doc.id in seen:
-                    continue
-                s = doc.to_dict()
-                if s.get("createdBy", uid) != uid:
-                    continue
-                if not _in_period(s, start, end):
-                    continue
-                seen.add(doc.id)
-                results.append(s)
-        except Exception:
-            pass
+
+    def _add(docs, require_uid: bool):
+        for doc in docs:
+            if doc.id in seen:
+                continue
+            s = doc.to_dict()
+            if require_uid and s.get("createdBy", uid) != uid:
+                continue
+            if not _in_period(s, start, end):
+                continue
+            seen.add(doc.id)
+            results.append(s)
+
+    # 1 — user subcollection (new layout)
+    try:
+        _add(db.collection("users").document(uid).collection(name).stream(), require_uid=False)
+    except Exception:
+        pass
+
+    # 2 — root collection filtered by createdBy (indexed)
+    try:
+        _add(db.collection(name).where("createdBy", "==", uid).stream(), require_uid=False)
+    except Exception:
+        pass
+
+    # 3 — unfiltered root scan (mirrors frontend; no createdBy filter applied)
+    try:
+        _add(db.collection(name).stream(), require_uid=False)
+    except Exception:
+        pass
+
     return results
+
+
+def _fetch_sales(db, uid: str, start: datetime, end: datetime) -> list:
+    return _fetch_root_collection(db, uid, "sales", start, end)
 
 
 def _fetch_expenses(db, uid: str, start: datetime, end: datetime) -> list:
-    seen: set = set()
-    results = []
-    strategies = [
-        lambda: db.collection("users").document(uid).collection("expenses").stream(),
-        lambda: db.collection("expenses").where("createdBy", "==", uid).stream(),
-        lambda: db.collection("expenses").stream(),
-    ]
-    for fetch in strategies:
-        try:
-            for doc in fetch():
-                if doc.id in seen:
-                    continue
-                e = doc.to_dict()
-                if e.get("createdBy", uid) != uid:
-                    continue
-                if not _in_period(e, start, end):
-                    continue
-                seen.add(doc.id)
-                results.append(e)
-        except Exception:
-            pass
-    return results
+    return _fetch_root_collection(db, uid, "expenses", start, end)
 
 
 def _low_stock_items(db) -> list:

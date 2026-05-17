@@ -161,11 +161,21 @@ class AccountantScheduler {
             }
 
             const data = await resp.json();
+            const responseText = data.response || '';
+
+            // Drop error responses — don't pollute history with config/infra failures
+            const isError = !responseText ||
+                /not configured|missing|unavailable|error generating/i.test(responseText);
+            if (isError) {
+                console.warn('[Scheduler] Report response was an error — not stored:', responseText.slice(0, 120));
+                return;
+            }
+
             const report = {
                 id:          `${type}_${Date.now()}`,
                 type,
                 label:       REPORT_TYPES[type].label,
-                text:        data.response || '',
+                text:        responseText,
                 tools:       data.tools_called || [],
                 steps:       data.steps || 0,
                 generatedAt: new Date().toISOString(),

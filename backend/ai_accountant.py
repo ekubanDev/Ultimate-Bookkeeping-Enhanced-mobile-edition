@@ -183,6 +183,15 @@ def _in_period(date_str: Any, start: Optional[str], end: Optional[str]) -> bool:
     return True
 
 
+def _doc_date(doc: Dict) -> Any:
+    """Extract the first non-None date value from a doc, checking all known date field names."""
+    for f in ("date", "createdAt", "timestamp", "saleDate"):
+        v = doc.get(f)
+        if v is not None:
+            return v
+    return None
+
+
 # ── Firestore helpers ──────────────────────────────────────────────────────
 
 def _get_firestore():
@@ -242,16 +251,14 @@ def _fetch_user_collection(db, uid: str, name: str) -> List[Dict]:
     except Exception:
         pass
 
-    # 3 — legacy docs that predate the createdBy field.
-    #     Read all, then keep only docs where createdBy is absent (legacy) or matches uid.
-    #     Docs belonging to another user have createdBy set to their uid and are excluded.
+    # 3 — unfiltered root collection scan (matches frontend loadSales behaviour).
+    #     The frontend loads collection(db, 'sales') with no createdBy filter, so we
+    #     must do the same here or revenue figures will diverge for docs whose createdBy
+    #     doesn't match the current uid (outlet-manager writes, migrated accounts, etc.).
+    #     _merge() deduplicates by id, so docs already fetched by strategies 1/2 are skipped.
+    #     Known risk for multi-tenant deployments — acceptable for single-admin use.
     try:
-        legacy = [
-            {"id": d.id, **d.to_dict()}
-            for d in db.collection(name).stream()
-            if d.to_dict().get("createdBy", uid) == uid
-        ]
-        _merge(legacy)
+        _merge([{"id": d.id, **d.to_dict()} for d in db.collection(name).stream()])
     except Exception as exc:
         logger.warning("Firestore root/%s legacy scan failed: %s", name, exc)
 
@@ -375,8 +382,8 @@ def _tool_get_financial_summary(uid: str, start: Optional[str], end: Optional[st
     sales    = _fetch_scoped(db, uid, "sales",    "outlet_sales",    scope, outlets_map)
     expenses = _fetch_scoped(db, uid, "expenses", "outlet_expenses", scope, outlets_map)
 
-    period_sales    = [s for s in sales    if _in_period(s.get("date") or s.get("createdAt"), start, end)]
-    period_expenses = [e for e in expenses if _in_period(e.get("date") or e.get("createdAt"), start, end)]
+    period_sales    = [s for s in sales    if _in_period(_doc_date(s), start, end)]
+    period_expenses = [e for e in expenses if _in_period(_doc_date(e), start, end)]
 
     # Product cost map for COGS fallback (sales that lack a cost snapshot)
     product_cost_map = _build_product_cost_map(db, uid)
@@ -428,7 +435,7 @@ def _tool_get_sales_breakdown(uid: str, start: Optional[str], end: Optional[str]
 
     outlets_map  = _get_outlets_map(db, uid)
     sales        = _fetch_scoped(db, uid, "sales", "outlet_sales", scope, outlets_map)
-    period_sales = [s for s in sales if _in_period(s.get("date") or s.get("createdAt"), start, end)]
+    period_sales = [s for s in sales if _in_period(_doc_date(s), start, end)]
 
     by_product: Dict[str, Dict] = {}
     by_date: Dict[str, float]   = {}
@@ -470,7 +477,7 @@ def _tool_get_expense_breakdown(uid: str, start: Optional[str], end: Optional[st
 
     outlets_map = _get_outlets_map(db, uid)
     expenses    = _fetch_scoped(db, uid, "expenses", "outlet_expenses", scope, outlets_map)
-    period      = [e for e in expenses if _in_period(e.get("date") or e.get("createdAt"), start, end)]
+    period      = [e for e in expenses if _in_period(_doc_date(e), start, end)]
 
     operating = [e for e in period if not _is_debt_payment(e)]
     debt_pmts = [e for e in period if     _is_debt_payment(e)]
@@ -549,8 +556,8 @@ def _tool_get_vat_summary(uid: str, start: Optional[str], end: Optional[str], sc
     sales    = _fetch_scoped(db, uid, "sales",    "outlet_sales",    scope, outlets_map)
     expenses = _fetch_scoped(db, uid, "expenses", "outlet_expenses", scope, outlets_map)
 
-    period_sales    = [s for s in sales    if _in_period(s.get("date") or s.get("createdAt"), start, end)]
-    period_expenses = [e for e in expenses if _in_period(e.get("date") or e.get("createdAt"), start, end)]
+    period_sales    = [s for s in sales    if _in_period(_doc_date(s), start, end)]
+    period_expenses = [e for e in expenses if _in_period(_doc_date(e), start, end)]
 
     # Use canonical revenue (stored total where available)
     gross_revenue = sum(_sale_total(s) for s in period_sales)

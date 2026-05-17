@@ -169,98 +169,101 @@ class AIChatService {
                     </div>
                     <div class="ai-schedule-panel-body">
 
-                        <!-- Email delivery section -->
-                        <div class="ai-schedule-email-section">
-                            <div class="ai-schedule-email-row">
-                                <i class="fas fa-envelope" style="color:#0ea5e9;margin-right:8px;"></i>
-                                <strong>Email Delivery</strong>
-                            </div>
-                            <label class="ai-schedule-field" style="margin-top:8px;">
-                                Email address
-                                <input type="email" id="sch-email" placeholder="your@email.com" autocomplete="email">
-                            </label>
-                            <label class="ai-schedule-field">
-                                Business name
-                                <input type="text" id="sch-business-name" placeholder="My Shop">
-                            </label>
-                            <div class="ai-schedule-email-actions">
-                                <button class="ai-schedule-test-btn" id="sch-test-email" title="Send test email">
-                                    <i class="fas fa-paper-plane"></i> Test Email
-                                </button>
-                            </div>
-                        </div>
+                        <!-- Controls zone: always visible, scrolls independently if needed -->
+                        <div class="ai-schedule-controls">
 
-                        <!-- Daily P&L -->
-                        <div class="ai-schedule-section">
-                            <div class="ai-schedule-row">
-                                <div class="ai-schedule-info">
-                                    <i class="fas fa-chart-line" style="color:#059669"></i>
-                                    <div><strong>Daily P&amp;L</strong><small>Revenue, COGS &amp; profit every evening</small></div>
+                            <!-- Email delivery section -->
+                            <div class="ai-schedule-email-section">
+                                <div class="ai-schedule-email-row">
+                                    <i class="fas fa-envelope" style="color:#0ea5e9;margin-right:8px;"></i>
+                                    <strong>Email Delivery</strong>
                                 </div>
-                                <label class="ai-toggle-switch">
-                                    <input type="checkbox" id="sch-daily-enabled">
-                                    <span class="ai-toggle-slider"></span>
-                                </label>
-                            </div>
-                            <div class="ai-schedule-options" id="sch-daily-opts">
-                                <label class="ai-schedule-field">Delivery time (8PM UTC default) <input type="time" id="sch-daily-time" value="20:00"></label>
-                                <button class="ai-schedule-send-now-btn" data-type="daily"><i class="fas fa-bolt"></i> Send Now</button>
-                            </div>
-                        </div>
-
-                        <!-- Weekly -->
-                        <div class="ai-schedule-section">
-                            <div class="ai-schedule-row">
-                                <div class="ai-schedule-info">
-                                    <i class="fas fa-tags" style="color:#d97706"></i>
-                                    <div><strong>Weekly Report</strong><small>P&amp;L + VAT + expense breakdown</small></div>
+                                <div class="ai-schedule-email-preview">
+                                    <span id="sch-email-preview" class="ai-schedule-email-addr">—</span>
+                                    <small>Configured in <strong>Settings → Notifications</strong></small>
                                 </div>
-                                <label class="ai-toggle-switch">
-                                    <input type="checkbox" id="sch-weekly-enabled">
-                                    <span class="ai-toggle-slider"></span>
-                                </label>
-                            </div>
-                            <div class="ai-schedule-options" id="sch-weekly-opts">
-                                <label class="ai-schedule-field">Day
-                                    <select id="sch-weekly-day">
-                                        <option value="1">Monday</option>
-                                        <option value="2">Tuesday</option>
-                                        <option value="3">Wednesday</option>
-                                        <option value="4">Thursday</option>
-                                        <option value="5">Friday</option>
-                                    </select>
-                                </label>
-                                <label class="ai-schedule-field">Time <input type="time" id="sch-weekly-time" value="09:00"></label>
-                                <button class="ai-schedule-send-now-btn" data-type="weekly"><i class="fas fa-bolt"></i> Send Now</button>
-                            </div>
-                        </div>
-
-                        <!-- Monthly -->
-                        <div class="ai-schedule-section">
-                            <div class="ai-schedule-row">
-                                <div class="ai-schedule-info">
-                                    <i class="fas fa-file-invoice" style="color:#7c3aed"></i>
-                                    <div><strong>Monthly Summary</strong><small>Full P&amp;L + VAT + GRA filing reminder</small></div>
+                                <div class="ai-schedule-email-actions">
+                                    <button class="ai-schedule-test-btn" id="sch-test-email" title="Send test email">
+                                        <i class="fas fa-paper-plane"></i> Test Email
+                                    </button>
                                 </div>
-                                <label class="ai-toggle-switch">
-                                    <input type="checkbox" id="sch-monthly-enabled">
-                                    <span class="ai-toggle-slider"></span>
-                                </label>
                             </div>
-                            <div class="ai-schedule-options" id="sch-monthly-opts">
-                                <label class="ai-schedule-field">Day of month <input type="number" id="sch-monthly-day" min="1" max="28" value="1"></label>
-                                <label class="ai-schedule-field">Time <input type="time" id="sch-monthly-time" value="08:00"></label>
-                                <button class="ai-schedule-send-now-btn" data-type="monthly"><i class="fas fa-bolt"></i> Send Now</button>
+
+                            <!-- Daily P&L -->
+                            <div class="ai-schedule-section">
+                                <div class="ai-schedule-row">
+                                    <div class="ai-schedule-info">
+                                        <i class="fas fa-chart-line" style="color:#059669"></i>
+                                        <div><strong>Daily P&amp;L</strong><small>Revenue, COGS &amp; profit every evening</small></div>
+                                    </div>
+                                    <label class="ai-toggle-switch">
+                                        <input type="checkbox" id="sch-daily-enabled">
+                                        <span class="ai-toggle-slider"></span>
+                                    </label>
+                                </div>
+                                <div class="ai-schedule-options" id="sch-daily-opts">
+                                    <label class="ai-schedule-field">Send time <input type="time" id="sch-daily-time" value="20:00"></label>
+                                    <button class="ai-schedule-send-now-btn" data-type="daily"><i class="fas fa-bolt"></i> Send Now</button>
+                                </div>
                             </div>
-                        </div>
 
-                        <button class="ai-schedule-save-btn" id="ai-schedule-save"><i class="fas fa-check"></i> Save &amp; Enable</button>
-                        <div id="ai-schedule-status" style="display:none;margin:8px 0;padding:8px 12px;border-radius:6px;font-size:13px;"></div>
+                            <!-- Weekly -->
+                            <div class="ai-schedule-section">
+                                <div class="ai-schedule-row">
+                                    <div class="ai-schedule-info">
+                                        <i class="fas fa-tags" style="color:#d97706"></i>
+                                        <div><strong>Weekly Report</strong><small>P&amp;L + VAT + expense breakdown</small></div>
+                                    </div>
+                                    <label class="ai-toggle-switch">
+                                        <input type="checkbox" id="sch-weekly-enabled">
+                                        <span class="ai-toggle-slider"></span>
+                                    </label>
+                                </div>
+                                <div class="ai-schedule-options" id="sch-weekly-opts">
+                                    <label class="ai-schedule-field">Day
+                                        <select id="sch-weekly-day">
+                                            <option value="1">Monday</option>
+                                            <option value="2">Tuesday</option>
+                                            <option value="3">Wednesday</option>
+                                            <option value="4">Thursday</option>
+                                            <option value="5">Friday</option>
+                                        </select>
+                                    </label>
+                                    <label class="ai-schedule-field">Time <input type="time" id="sch-weekly-time" value="09:00"></label>
+                                    <button class="ai-schedule-send-now-btn" data-type="weekly"><i class="fas fa-bolt"></i> Send Now</button>
+                                </div>
+                            </div>
 
+                            <!-- Monthly -->
+                            <div class="ai-schedule-section">
+                                <div class="ai-schedule-row">
+                                    <div class="ai-schedule-info">
+                                        <i class="fas fa-file-invoice" style="color:#7c3aed"></i>
+                                        <div><strong>Monthly Summary</strong><small>Full P&amp;L + VAT + GRA filing reminder</small></div>
+                                    </div>
+                                    <label class="ai-toggle-switch">
+                                        <input type="checkbox" id="sch-monthly-enabled">
+                                        <span class="ai-toggle-slider"></span>
+                                    </label>
+                                </div>
+                                <div class="ai-schedule-options" id="sch-monthly-opts">
+                                    <label class="ai-schedule-field">Day of month <input type="number" id="sch-monthly-day" min="1" max="28" value="1"></label>
+                                    <label class="ai-schedule-field">Time <input type="time" id="sch-monthly-time" value="08:00"></label>
+                                    <button class="ai-schedule-send-now-btn" data-type="monthly"><i class="fas fa-bolt"></i> Send Now</button>
+                                </div>
+                            </div>
+
+                            <button class="ai-schedule-save-btn" id="ai-schedule-save"><i class="fas fa-check"></i> Save &amp; Enable</button>
+                            <div id="ai-schedule-status" style="display:none;margin:8px 0;padding:8px 12px;border-radius:6px;font-size:13px;"></div>
+
+                        </div><!-- /.ai-schedule-controls -->
+
+                        <!-- History zone: grows and scrolls independently -->
                         <div class="ai-schedule-history">
                             <h5>Recent Reports</h5>
                             <div id="ai-schedule-history-list"><p class="ai-schedule-empty">No reports generated yet.</p></div>
                         </div>
+
                     </div>
                 </div>
 
@@ -903,7 +906,24 @@ class AIChatService {
         showOpts('monthly', cfg.monthly_vat.enabled);
     }
 
+    _getSettingsEmail() {
+        return document.getElementById('notification-email')?.value?.trim() || '';
+    }
+
+    _getSettingsBusinessName() {
+        return document.getElementById('business-name')?.value?.trim() || 'Your Business';
+    }
+
     async _loadEmailPrefsFromBackend() {
+        // Show the email address from main settings
+        const email = this._getSettingsEmail();
+        const preview = document.getElementById('sch-email-preview');
+        if (preview) {
+            preview.textContent = email || 'No email set in Settings';
+            preview.classList.toggle('ai-schedule-email-addr--empty', !email);
+        }
+
+        // Load toggle states from backend prefs
         const user = auth.currentUser;
         if (!user) return;
         try {
@@ -913,13 +933,6 @@ class AIChatService {
             });
             if (!resp.ok) return;
             const prefs = await resp.json();
-            const setVal = (id, val) => {
-                const el = document.getElementById(id);
-                if (el && val !== undefined) el.value = val;
-            };
-            setVal('sch-email', prefs.email || '');
-            setVal('sch-business-name', prefs.business_name || '');
-            // Sync enable states from backend prefs
             const sync = (id, val) => {
                 const el = document.getElementById(id);
                 if (el && val !== undefined) el.checked = val;
@@ -933,7 +946,7 @@ class AIChatService {
                 if (opts) opts.classList.toggle('visible', el?.checked || false);
             });
         } catch (e) {
-            console.warn('[Schedule] Could not load email prefs:', e);
+            console.warn('[Schedule] Could not load report prefs:', e);
         }
     }
 
@@ -946,7 +959,6 @@ class AIChatService {
         };
         const checked = (id) => document.getElementById(id)?.checked || false;
         const numVal  = (id, fallback) => parseInt(document.getElementById(id)?.value || fallback, 10) || fallback;
-        const strVal  = (id) => document.getElementById(id)?.value?.trim() || '';
 
         const [dh, dm] = getTime('sch-daily-time');
         const [wh, wm] = getTime('sch-weekly-time');
@@ -961,29 +973,27 @@ class AIChatService {
         const btn = document.getElementById('ai-schedule-save');
         if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Saving…'; }
 
-        const email = strVal('sch-email');
-        const businessName = strVal('sch-business-name');
+        const email = this._getSettingsEmail();
+        const businessName = this._getSettingsBusinessName();
 
-        if (email) {
-            try {
-                const user = auth.currentUser;
-                if (user) {
-                    const token = await user.getIdToken();
-                    await fetch(`${window.BACKEND_URL || ''}/api/reports/preferences`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-                        body: JSON.stringify({
-                            email,
-                            business_name: businessName,
-                            daily_enabled:   checked('sch-daily-enabled'),
-                            weekly_enabled:  checked('sch-weekly-enabled'),
-                            monthly_enabled: checked('sch-monthly-enabled'),
-                        }),
-                    });
-                }
-            } catch (e) {
-                console.warn('[Schedule] Failed to save email prefs:', e);
+        try {
+            const user = auth.currentUser;
+            if (user) {
+                const token = await user.getIdToken();
+                await fetch(`${window.BACKEND_URL || ''}/api/reports/preferences`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+                    body: JSON.stringify({
+                        email,
+                        business_name: businessName,
+                        daily_enabled:   checked('sch-daily-enabled'),
+                        weekly_enabled:  checked('sch-weekly-enabled'),
+                        monthly_enabled: checked('sch-monthly-enabled'),
+                    }),
+                });
             }
+        } catch (e) {
+            console.warn('[Schedule] Failed to save report prefs:', e);
         }
 
         if (btn) {
@@ -1008,8 +1018,8 @@ class AIChatService {
         if (testBtn && !testBtn._bound) {
             testBtn._bound = true;
             testBtn.addEventListener('click', async () => {
-                const email = document.getElementById('sch-email')?.value?.trim();
-                if (!email) { this._showScheduleStatus('Enter an email address first.', true); return; }
+                const email = this._getSettingsEmail();
+                if (!email) { this._showScheduleStatus('No email set — add one in Settings → Notifications.', true); return; }
                 testBtn.disabled = true;
                 testBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Sending…';
                 try {
@@ -1036,8 +1046,8 @@ class AIChatService {
             btn._bound = true;
             btn.addEventListener('click', async () => {
                 const type = btn.dataset.type;
-                const email = document.getElementById('sch-email')?.value?.trim();
-                if (!email) { this._showScheduleStatus('Save your email address first.', true); return; }
+                const email = this._getSettingsEmail();
+                if (!email) { this._showScheduleStatus('No email set — add one in Settings → Notifications.', true); return; }
                 btn.disabled = true;
                 btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Sending…';
                 try {
@@ -1078,7 +1088,15 @@ class AIChatService {
             const date    = new Date(r.generatedAt);
             const dateStr = date.toLocaleDateString([], { month: 'short', day: 'numeric' }) +
                             ' · ' + date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-            const preview = (r.text || '').replace(/[#*`]/g, '').slice(0, 110) + (r.text?.length > 110 ? '…' : '');
+
+            // Build a structured one-liner from the AI text instead of a raw slice
+            const text = r.text || '';
+            const netMatch   = text.match(/Net Profit[^₵\d]*₵([\d,]+(?:\.\d+)?)/i);
+            const revMatch   = text.match(/Revenue[^₵\d]*₵([\d,]+(?:\.\d+)?)/i);
+            const preview = netMatch
+                ? `Net Profit ₵${netMatch[1]}${revMatch ? ' · Revenue ₵' + revMatch[1] : ''}`
+                : text.replace(/[#*`]/g, '').replace(/\n+/g, ' ').trim().slice(0, 90) + (text.length > 90 ? '…' : '');
+
             return `
                 <div class="ai-report-card">
                     <div class="ai-report-card-header">
@@ -1086,7 +1104,7 @@ class AIChatService {
                         <small>${dateStr}</small>
                     </div>
                     <p class="ai-report-card-preview">${this.escapeHtml(preview)}</p>
-                    <button class="ai-report-open-btn" data-report-text="${this.escapeHtml(r.text || '')}">
+                    <button class="ai-report-open-btn" data-report-text="${this.escapeHtml(text)}">
                         Open in chat <i class="fas fa-arrow-right"></i>
                     </button>
                 </div>`;
