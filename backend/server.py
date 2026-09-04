@@ -22,6 +22,8 @@ from firebase_auth import (
     ensure_firebase_admin_app,
     verify_bearer_id_token,
 )
+from ai_accountant import run_accountant
+from ai_inventory import run_inventory
 
 try:
     from emergentintegrations.llm.chat import LlmChat, UserMessage
@@ -295,7 +297,15 @@ async def get_status_checks():
     return status_checks
 
 def _insights_sale_line_revenue(s: Dict[str, Any]) -> float:
-    """Align with frontend enhanced-dashboard calculateRevenue (discount + tax)."""
+    """Mirrors getSaleTotal() in accounting.js: s.total first, derive from components if absent."""
+    t = s.get("total")
+    if t is not None:
+        try:
+            v = float(t)
+            if v == v:  # finite check — nan != nan
+                return v
+        except (TypeError, ValueError):
+            pass
     try:
         qty = float(s.get("quantity", 0) or 0)
         price = float(s.get("price", 0) or 0)
@@ -304,17 +314,11 @@ def _insights_sale_line_revenue(s: Dict[str, Any]) -> float:
         subtotal = qty * price * (1.0 - disc / 100.0)
         return subtotal * (1.0 + tax / 100.0)
     except (TypeError, ValueError):
-        t = s.get("total")
-        if t is not None:
-            try:
-                return float(t)
-            except (TypeError, ValueError):
-                pass
         return 0.0
 
 
 def _insights_compute_cogs(sales: List[Dict[str, Any]], products: List[Dict[str, Any]]) -> float:
-    """Align with frontend enhanced-dashboard calculateCOGS (product cost × qty)."""
+    """Mirrors frontend profit-analysis.js: sale-time cost snapshot takes priority over current product cost."""
     by_name: Dict[str, float] = {}
     for p in products:
         n = (p.get("name") or "").strip()
@@ -327,12 +331,15 @@ def _insights_compute_cogs(sales: List[Dict[str, Any]], products: List[Dict[str,
     total = 0.0
     for s in sales:
         name = (s.get("product") or "").strip()
-        cost = by_name.get(name)
-        if cost is None:
-            try:
-                cost = float(s.get("cost", 0) or 0)
-            except (TypeError, ValueError):
-                cost = 0.0
+        # Prefer sale-time snapshot (written at POS for historical accuracy);
+        # fall back to current product cost when snapshot is absent or zero.
+        snapshot = s.get("cost")
+        try:
+            cost = float(snapshot) if snapshot not in (None, "", 0) else 0.0
+        except (TypeError, ValueError):
+            cost = 0.0
+        if cost <= 0:
+            cost = by_name.get(name, 0.0)
         try:
             qty = float(s.get("quantity", 0) or 0)
         except (TypeError, ValueError):
@@ -360,10 +367,7 @@ async def get_ai_insights(request: AIInsightsRequest):
             if _safe_float(p.get('quantity', 0)) <= _safe_float(p.get('minStock', 10), 10)
         )
 
-        def _is_debt_payment(exp):
-            exp_type = (exp.get('expenseType', '') or '').lower()
-            cat = (exp.get('category', '') or '').lower()
-            return exp_type == 'liability_payment' or cat in ('debt payment', 'loan repayment')
+        # _is_debt_payment is defined at module level
 
         operating_expenses = [e for e in request.expenses_data if not _is_debt_payment(e)]
         debt_payments = [e for e in request.expenses_data if _is_debt_payment(e)]
@@ -914,6 +918,169 @@ Provide a helpful, concise response focused on actionable business advice. For i
         logger.error(f"AI chat error: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Chat failed: {str(e)}")
 
+# ==================== AI ACCOUNTANT SKILL ENDPOINT ====================
+
+@api_router.post("/ai/accountant")
+async def ai_accountant(data: Dict[str, Any], authorization: Optional[str] = Header(None)):
+    """
+    AI Accountant skill — agentic, reads live Firestore data for the authenticated user.
+    Requires a valid Firebase ID token in the Authorization: Bearer header.
+    """
+    try:
+        question = (data.get("question") or "").strip()
+        history  = data.get("history", []) if isinstance(data.get("history"), list) else []
+        api_key  = os.environ.get("EMERGENT_LLM_KEY")
+
+        if not question:
+            raise HTTPException(status_code=400, detail="question is required")
+
+        if not api_key:
+            return {"response": "AI Accountant is not configured. EMERGENT_LLM_KEY is missing.", "tools_called": [], "steps": 0}
+
+        # Auth is always required for the accountant — it reads live tenant data
+        if not ensure_firebase_admin_app():
+            raise HTTPException(status_code=503, detail="Firebase Admin SDK not configured — accountant requires authentication.")
+
+        try:
+            claims = verify_bearer_id_token(authorization)
+            uid    = claims.get("uid") or claims.get("sub") or ""
+        except ValueError:
+            raise HTTPException(status_code=401, detail="Authentication required. Sign in to use the AI Accountant.")
+        except Exception:
+            raise HTTPException(status_code=401, detail="Invalid or expired authentication token.")
+
+        if not uid:
+            raise HTTPException(status_code=401, detail="Could not determine user identity from token.")
+
+        try:
+            check_ai_chat_rate_limit(uid)
+        except PermissionError:
+            raise HTTPException(status_code=429, detail="Too many requests. Please wait a moment.")
+
+        result = await run_accountant(
+            question=question,
+            uid=uid,
+            history=history,
+            api_key=api_key,
+        )
+        return result
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("AI Accountant error: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Accountant failed: {str(e)}")
+
+
+# ==================== SCHEDULED ACCOUNTANT REPORT ENDPOINT ====================
+
+_SCHEDULED_QUESTIONS = {
+    "daily_pl":       "Prepare a profit and loss summary for today. Compare revenue and expenses against yesterday if possible. Highlight any concerns.",
+    "weekly_expense": "Review and categorise all expenses from the past 7 days. Identify any uncategorised items, flag unusual spending, and summarise total spending by category.",
+    "monthly_vat":    "Calculate my estimated VAT liability for this month including NHIL, GetFund levy, and the COVID-19 Health Recovery Levy. Summarise compliance status and any risks.",
+}
+
+class ScheduledReportRequest(BaseModel):
+    report_type: str
+
+@api_router.post("/ai/accountant/scheduled")
+async def ai_accountant_scheduled(data: ScheduledReportRequest, authorization: Optional[str] = Header(None)):
+    """
+    Scheduled accountant report — fires a preset question for daily P&L,
+    weekly expense review, or monthly VAT summary.
+    Requires a valid Firebase ID token.
+    """
+    try:
+        report_type = (data.report_type or "").strip()
+        if report_type not in _SCHEDULED_QUESTIONS:
+            raise HTTPException(status_code=400, detail=f"Unknown report_type: {report_type}")
+
+        question = _SCHEDULED_QUESTIONS[report_type]
+        api_key  = os.environ.get("EMERGENT_LLM_KEY")
+
+        if not api_key:
+            return {"response": "AI Accountant is not configured. EMERGENT_LLM_KEY is missing.", "tools_called": [], "steps": 0}
+
+        if not ensure_firebase_admin_app():
+            raise HTTPException(status_code=503, detail="Firebase Admin SDK not configured.")
+
+        try:
+            claims = verify_bearer_id_token(authorization)
+            uid    = claims.get("uid") or claims.get("sub") or ""
+        except (ValueError, Exception):
+            raise HTTPException(status_code=401, detail="Authentication required.")
+
+        if not uid:
+            raise HTTPException(status_code=401, detail="Could not determine user identity.")
+
+        try:
+            check_ai_chat_rate_limit(uid)
+        except PermissionError:
+            raise HTTPException(status_code=429, detail="Too many requests. Please wait a moment.")
+
+        result = await run_accountant(question=question, uid=uid, history=[], api_key=api_key)
+        return result
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Scheduled accountant report error: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Scheduled report failed: {str(e)}")
+
+
+# ==================== AI INVENTORY SKILL ENDPOINT ====================
+
+@api_router.post("/ai/inventory")
+async def ai_inventory(data: Dict[str, Any], authorization: Optional[str] = Header(None)):
+    """
+    AI Inventory Manager skill — agentic, reads live Firestore data for the authenticated user.
+    Requires a valid Firebase ID token in the Authorization: Bearer header.
+    """
+    try:
+        question = (data.get("question") or "").strip()
+        history  = data.get("history", []) if isinstance(data.get("history"), list) else []
+        api_key  = os.environ.get("EMERGENT_LLM_KEY")
+
+        if not question:
+            raise HTTPException(status_code=400, detail="question is required")
+
+        if not api_key:
+            return {"response": "AI Inventory Manager is not configured. EMERGENT_LLM_KEY is missing.", "tools_called": [], "steps": 0}
+
+        if not ensure_firebase_admin_app():
+            raise HTTPException(status_code=503, detail="Firebase Admin SDK not configured — inventory skill requires authentication.")
+
+        try:
+            claims = verify_bearer_id_token(authorization)
+            uid    = claims.get("uid") or claims.get("sub") or ""
+        except ValueError:
+            raise HTTPException(status_code=401, detail="Authentication required. Sign in to use the AI Inventory Manager.")
+        except Exception:
+            raise HTTPException(status_code=401, detail="Invalid or expired authentication token.")
+
+        if not uid:
+            raise HTTPException(status_code=401, detail="Could not determine user identity from token.")
+
+        try:
+            check_ai_chat_rate_limit(uid)
+        except PermissionError:
+            raise HTTPException(status_code=429, detail="Too many requests. Please wait a moment.")
+
+        result = await run_inventory(
+            question=question,
+            uid=uid,
+            history=history,
+            api_key=api_key,
+        )
+        return result
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("AI Inventory error: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Inventory skill failed: {str(e)}")
+
+
 # ==================== PO QUANTITY SUGGESTION ENDPOINT ====================
 
 @api_router.post("/ai/po-suggest")
@@ -1203,8 +1370,14 @@ def _compute_ar_aging(customers: list, sales: list) -> dict:
     }
 
 
-def _compute_period_comparison(sales: list, expenses: list, start: str, end: str) -> dict:
-    """Compare current period to the equivalent previous period."""
+def _is_debt_payment(exp: Dict[str, Any]) -> bool:
+    exp_type = (exp.get("expenseType", "") or "").lower()
+    cat = (exp.get("category", "") or "").lower()
+    return exp_type == "liability_payment" or cat in ("debt payment", "loan repayment")
+
+
+def _compute_period_comparison(sales: list, expenses: list, products: list, start: str, end: str) -> dict:
+    """Compare current period to the equivalent previous period using canonical P&L formula."""
     if not start or not end:
         return {"error": "Both start and end dates are required for comparison"}
 
@@ -1222,12 +1395,22 @@ def _compute_period_comparison(sales: list, expenses: list, start: str, end: str
         ps_str, pe_str = ps.isoformat(), pe.isoformat()
         fs = [s for s in s_list if ps_str <= s.get("date", "") <= pe_str]
         fe = [e for e in e_list if ps_str <= e.get("date", "") <= pe_str]
-        revenue = sum(float(s.get("total", 0) or (float(s.get("quantity", 0) or 0) * float(s.get("price", 0) or 0))) for s in fs)
-        exp_total = sum(float(e.get("amount", 0) or 0) for e in fe)
+        revenue = sum(
+            float(s.get("total", 0) or (float(s.get("quantity", 0) or 0) * float(s.get("price", 0) or 0)))
+            for s in fs
+        )
+        cogs = _insights_compute_cogs(fs, products)
+        gross_profit = revenue - cogs
+        op_expenses = sum(float(e.get("amount", 0) or 0) for e in fe if not _is_debt_payment(e))
+        debt_payments = sum(float(e.get("amount", 0) or 0) for e in fe if _is_debt_payment(e))
+        net_profit = gross_profit - op_expenses
         return {
             "revenue": round(revenue, 2),
-            "expenses": round(exp_total, 2),
-            "profit": round(revenue - exp_total, 2),
+            "cogs": round(cogs, 2),
+            "gross_profit": round(gross_profit, 2),
+            "operating_expenses": round(op_expenses, 2),
+            "debt_payments": round(debt_payments, 2),
+            "net_profit": round(net_profit, 2),
             "transaction_count": len(fs),
             "avg_transaction": round(revenue / len(fs), 2) if fs else 0,
         }
@@ -1245,8 +1428,10 @@ def _compute_period_comparison(sales: list, expenses: list, start: str, end: str
         "previous_period": {"start": prev_start.isoformat(), "end": prev_end.isoformat(), **previous},
         "changes": {
             "revenue_pct": _pct(current["revenue"], previous["revenue"]),
-            "expenses_pct": _pct(current["expenses"], previous["expenses"]),
-            "profit_pct": _pct(current["profit"], previous["profit"]),
+            "cogs_pct": _pct(current["cogs"], previous["cogs"]),
+            "gross_profit_pct": _pct(current["gross_profit"], previous["gross_profit"]),
+            "operating_expenses_pct": _pct(current["operating_expenses"], previous["operating_expenses"]),
+            "net_profit_pct": _pct(current["net_profit"], previous["net_profit"]),
             "transactions_pct": _pct(current["transaction_count"], previous["transaction_count"]),
         },
     }
@@ -1265,7 +1450,10 @@ async def generate_report(request: ReportRequest):
             result["data"] = _compute_ar_aging(request.customers_data, request.sales_data)
 
         elif request.report_type == "period_comparison":
-            result["data"] = _compute_period_comparison(request.sales_data, request.expenses_data, request.date_start, request.date_end)
+            result["data"] = _compute_period_comparison(
+                request.sales_data, request.expenses_data, request.products_data,
+                request.date_start, request.date_end,
+            )
 
         else:
             raise HTTPException(status_code=400, detail=f"Unknown report type: {request.report_type}")
@@ -1320,6 +1508,8 @@ async def email_send_report(request: SendReportRequest):
         ok = await email_service.send_daily_summary(request.data, request.recipient, request.business_name)
     elif request.report_type == "weekly":
         ok = await email_service.send_weekly_summary(request.data, request.recipient, request.business_name)
+    elif request.report_type == "monthly":
+        ok = await email_service.send_monthly_summary(request.data, request.recipient, request.business_name)
     else:
         raise HTTPException(status_code=400, detail=f"Unknown report type: {request.report_type}")
     if not ok:
@@ -1341,6 +1531,198 @@ async def email_test(request: TestEmailRequest):
 async def email_update_settings(request: EmailSettingsRequest):
     report_scheduler.update_schedule(request.model_dump())
     return {"status": "updated", "emailNotifications": request.emailNotifications, "dailyReports": request.dailyReports}
+
+
+# ── Report Preferences (per-user, Firestore-backed) ───────────────────────────
+
+class ReportPreferencesRequest(BaseModel):
+    email: str = ""
+    business_name: str = ""
+    daily_enabled: bool = False
+    weekly_enabled: bool = False
+    monthly_enabled: bool = False
+    stock_alerts_enabled: bool = False
+
+class SendNowRequest(BaseModel):
+    report_type: str  # "daily" | "weekly" | "monthly"
+
+_PREFS_SUBCOL = "settings"
+_PREFS_DOC    = "report_preferences"
+
+
+@api_router.get("/reports/preferences")
+async def get_report_preferences(authorization: Optional[str] = Header(None)):
+    try:
+        if not ensure_firebase_admin_app():
+            raise HTTPException(status_code=503, detail="Firebase not available")
+        claims = verify_bearer_id_token(authorization)
+        uid = claims.get("uid") or claims.get("sub") or ""
+        if not uid:
+            raise HTTPException(status_code=401, detail="Invalid token")
+
+        from ai_accountant import _get_firestore
+        db = _get_firestore()
+        if not db:
+            raise HTTPException(status_code=503, detail="Firestore not available")
+
+        doc = (db.collection("users").document(uid)
+               .collection(_PREFS_SUBCOL).document(_PREFS_DOC).get())
+        if doc.exists:
+            return doc.to_dict()
+        return {"email": "", "business_name": "", "daily_enabled": False,
+                "weekly_enabled": False, "monthly_enabled": False, "stock_alerts_enabled": False}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@api_router.post("/reports/preferences")
+async def save_report_preferences(
+    data: ReportPreferencesRequest,
+    authorization: Optional[str] = Header(None),
+):
+    try:
+        if not ensure_firebase_admin_app():
+            raise HTTPException(status_code=503, detail="Firebase not available")
+        claims = verify_bearer_id_token(authorization)
+        uid = claims.get("uid") or claims.get("sub") or ""
+        if not uid:
+            raise HTTPException(status_code=401, detail="Invalid token")
+
+        from ai_accountant import _get_firestore
+        db = _get_firestore()
+        if not db:
+            raise HTTPException(status_code=503, detail="Firestore not available")
+
+        payload = data.model_dump()
+        payload["updated_at"] = datetime.now(timezone.utc).isoformat()
+        (db.collection("users").document(uid)
+           .collection(_PREFS_SUBCOL).document(_PREFS_DOC).set(payload, merge=True))
+
+        return {"status": "saved"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@api_router.post("/reports/send-now")
+async def send_report_now(
+    data: SendNowRequest,
+    authorization: Optional[str] = Header(None),
+):
+    try:
+        if not ensure_firebase_admin_app():
+            raise HTTPException(status_code=503, detail="Firebase not available")
+        claims = verify_bearer_id_token(authorization)
+        uid = claims.get("uid") or claims.get("sub") or ""
+        if not uid:
+            raise HTTPException(status_code=401, detail="Invalid token")
+
+        report_type = data.report_type
+        if report_type not in ("daily", "weekly", "monthly"):
+            raise HTTPException(status_code=400, detail="report_type must be daily, weekly, or monthly")
+
+        if not email_service.configured:
+            raise HTTPException(status_code=503, detail="Email service not configured (GMAIL_USER / GMAIL_APP_PASSWORD missing)")
+
+        from ai_accountant import _get_firestore
+        db = _get_firestore()
+        if not db:
+            raise HTTPException(status_code=503, detail="Firestore not available")
+
+        prefs_doc = (db.collection("users").document(uid)
+                       .collection(_PREFS_SUBCOL).document(_PREFS_DOC).get())
+        if not prefs_doc.exists:
+            raise HTTPException(status_code=400, detail="No email preferences set. Save preferences first.")
+        prefs = prefs_doc.to_dict()
+        recipient = prefs.get("email", "")
+        if not recipient:
+            raise HTTPException(status_code=400, detail="No email address in preferences")
+        business_name = prefs.get("business_name", "Your Business")
+
+        from report_generator import get_daily_data, get_weekly_data, get_monthly_data
+        from scheduler import _store_report_record
+
+        if report_type == "daily":
+            report_data = get_daily_data(db, uid)
+            ok = await email_service.send_daily_summary(report_data, recipient, business_name)
+        elif report_type == "weekly":
+            report_data = get_weekly_data(db, uid)
+            ok = await email_service.send_weekly_summary(report_data, recipient, business_name)
+        else:
+            report_data = get_monthly_data(db, uid)
+            ok = await email_service.send_monthly_summary(report_data, recipient, business_name)
+
+        if ok:
+            _store_report_record(db, uid, report_type, report_data)
+        return {"status": "sent" if ok else "failed", "report_type": report_type, "recipient": recipient}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("send_report_now error: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ── Cloud Scheduler trigger endpoints ────────────────────────────────────────
+# Called by Google Cloud Scheduler, not by the frontend.
+# Secured by a CRON_SECRET env var checked against the Authorization header.
+# Route: POST /api/internal/trigger/{report_type}
+#         report_type: daily | weekly | monthly | stock_alert
+
+_CRON_SECRET = os.environ.get("CRON_SECRET", "")
+
+
+def _verify_cron_secret(authorization: Optional[str]):
+    if not _CRON_SECRET:
+        raise HTTPException(status_code=503, detail="CRON_SECRET not configured on server")
+    token = (authorization or "").removeprefix("Bearer ").strip()
+    if token != _CRON_SECRET:
+        raise HTTPException(status_code=401, detail="Invalid cron secret")
+
+
+@api_router.post("/internal/trigger/{report_type}")
+async def cron_trigger(report_type: str, authorization: Optional[str] = Header(None)):
+    _verify_cron_secret(authorization)
+
+    if report_type not in ("daily", "weekly", "monthly", "stock_alert"):
+        raise HTTPException(status_code=400, detail=f"Unknown report_type: {report_type}")
+
+    if not ensure_firebase_admin_app():
+        raise HTTPException(status_code=503, detail="Firebase not available")
+
+    from ai_accountant import _get_firestore
+    from scheduler import _all_user_prefs, _send_report_for_user, _stock_alert_job
+
+    db = _get_firestore()
+    if not db:
+        raise HTTPException(status_code=503, detail="Firestore not available")
+
+    if report_type == "stock_alert":
+        await _stock_alert_job()
+        return {"status": "ok", "report_type": report_type}
+
+    user_prefs = _all_user_prefs(db)
+    pref_key   = f"{report_type}_enabled"
+    sent, skipped = 0, 0
+
+    import asyncio
+    tasks = []
+    for uid, prefs in user_prefs:
+        if prefs.get(pref_key):
+            tasks.append(_send_report_for_user(uid, prefs, report_type, db))
+        else:
+            skipped += 1
+
+    if tasks:
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        errors = sum(1 for r in results if isinstance(r, Exception))
+        sent = len(tasks) - errors
+
+    logger.info("cron_trigger: %s — sent=%d skipped=%d", report_type, sent, skipped)
+    return {"status": "ok", "report_type": report_type, "sent": sent, "skipped": skipped}
 
 
 @api_router.post("/metrics/events")

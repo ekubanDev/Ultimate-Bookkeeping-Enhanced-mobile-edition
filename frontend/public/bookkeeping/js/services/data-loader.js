@@ -107,16 +107,38 @@ class DataLoaderService {
                         state.allProducts = rows;
 
                     } else {
-                        // ADMIN: same paths as POS — user-scoped inventory first, then legacy root
                         const uid = state.currentUser.uid;
-                        let rows = await fetchCollectionRows(
-                            collection(db, 'users', uid, 'inventory'),
-                            `users/${uid}/inventory`
-                        );
-                        if (rows.length === 0) {
-                            rows = await fetchCollectionRows(collection(db, 'inventory'), 'inventory_legacy');
+                        const outletFilter = state.selectedOutletFilter;
+                        const isSpecificOutlet = outletFilter && outletFilter !== 'main' && outletFilter !== 'all';
+
+                        if (isSpecificOutlet) {
+                            // ADMIN viewing a specific outlet: load that outlet's inventory
+                            const ref = collection(db, 'users', uid, 'outlets', outletFilter, 'outlet_inventory');
+                            state.allProducts = await fetchCollectionRows(ref, `outlet_inventory:${outletFilter}`);
+                        } else if (outletFilter === 'all') {
+                            // ADMIN viewing all: merge main inventory + every outlet's inventory
+                            const mainRows = await fetchCollectionRows(
+                                collection(db, 'users', uid, 'inventory'), `users/${uid}/inventory`
+                            );
+                            const outlets = (state.allOutlets || []).filter(o => o && o.id);
+                            const outletFetches = outlets.map(o =>
+                                fetchCollectionRows(
+                                    collection(db, 'users', uid, 'outlets', o.id, 'outlet_inventory'),
+                                    `outlet_inventory:${o.id}`
+                                ).then(rows => rows.map(r => ({ ...r, outletId: r.outletId || o.id })))
+                            );
+                            const outletResults = await Promise.all(outletFetches);
+                            state.allProducts = mainRows.concat(outletResults.flat());
+                        } else {
+                            // ADMIN on main: user-scoped inventory, fall back to legacy root
+                            let rows = await fetchCollectionRows(
+                                collection(db, 'users', uid, 'inventory'), `users/${uid}/inventory`
+                            );
+                            if (rows.length === 0) {
+                                rows = await fetchCollectionRows(collection(db, 'inventory'), 'inventory_legacy');
+                            }
+                            state.allProducts = rows;
                         }
-                        state.allProducts = rows;
                     }
 
                 } catch (error) {

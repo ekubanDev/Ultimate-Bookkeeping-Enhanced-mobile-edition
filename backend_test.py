@@ -7,10 +7,93 @@ Tests AI endpoints and core functionality
 import requests
 import json
 import sys
+import os
+import unittest
 from datetime import datetime
 
+# ── Unit tests — P&L formula correctness ──────────────────────────────────
+# These import directly from the backend module and run without a network.
+# Run standalone: python backend_test.py unit
+# Run as part of full suite: python backend_test.py (integration tests include unit pass/fail)
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "backend"))
+
+
+class PLFormulaTests(unittest.TestCase):
+
+    def setUp(self):
+        # Stub heavy deps so ai_accountant can be imported without the full server stack
+        import unittest.mock as mock
+        for mod in ("openai", "firebase_admin", "firebase_admin.credentials", "firebase_admin.firestore"):
+            sys.modules.setdefault(mod, mock.MagicMock())
+        from ai_accountant import _sale_total, _sale_cogs, _is_debt_payment, _in_period, _doc_date
+        self._sale_total      = _sale_total
+        self._sale_cogs       = _sale_cogs
+        self._is_debt_payment = _is_debt_payment
+        self._in_period       = _in_period
+        self._doc_date        = _doc_date
+
+    # 1. Revenue — stored total wins over derived
+    def test_sale_total_uses_stored_total(self):
+        sale = {"total": 500.0, "quantity": 2, "price": 100, "discount": 10, "tax": 15}
+        self.assertEqual(self._sale_total(sale), 500.0,
+            "Stored 'total' must take priority over qty×price derivation")
+
+    # 2. Revenue — correct derivation when total absent
+    def test_sale_total_derived_with_discount_and_tax(self):
+        # qty=10, price=100, discount=10%, tax=15%  →  10×100×0.9×1.15 = 1035.0
+        sale = {"quantity": 10, "price": 100, "discount": 10, "tax": 15}
+        self.assertAlmostEqual(self._sale_total(sale), 1035.0, places=2,
+            msg="Revenue derivation: qty × price × (1-disc%) × (1+tax%) must be exact")
+
+    # 3. COGS — snapshot (sale.cost) takes priority over product cost map
+    def test_cogs_prefers_snapshot_over_cost_map(self):
+        sale = {"quantity": 5, "cost": 80.0, "product": "Widget"}
+        cost_map = {"Widget": 60.0}  # would give 300 — snapshot should give 400
+        self.assertEqual(self._sale_cogs(sale, cost_map), 400.0,
+            "COGS must use sale-time cost snapshot (sale.cost × qty), not current product cost")
+
+    # 4. Debt classification — must exclude debt payments from operating expenses
+    def test_is_debt_payment_classification(self):
+        self.assertTrue(self._is_debt_payment({"expenseType": "liability_payment"}))
+        self.assertTrue(self._is_debt_payment({"category": "loan repayment"}))
+        self.assertTrue(self._is_debt_payment({"category": "debt payment"}))
+        self.assertFalse(self._is_debt_payment({"category": "rent", "expenseType": "operating"}),
+            "Regular expenses must not be classified as debt payments")
+
+    # 5. Period filter — inclusive boundaries, multi-field date detection, out-of-range exclusion
+    def test_in_period_boundaries_and_doc_date(self):
+        in_range   = {"date": "2026-04-15"}
+        on_start   = {"date": "2026-04-01"}
+        on_end     = {"date": "2026-04-30"}
+        before     = {"date": "2026-03-31"}
+        after      = {"date": "2026-05-01"}
+        alt_field  = {"saleDate": "2026-04-10"}   # _doc_date must find saleDate
+        no_date    = {}                             # unknown date → include
+
+        start, end = "2026-04-01", "2026-04-30"
+
+        self.assertTrue(self._in_period(self._doc_date(in_range),  start, end))
+        self.assertTrue(self._in_period(self._doc_date(on_start),  start, end), "Start boundary must be inclusive")
+        self.assertTrue(self._in_period(self._doc_date(on_end),    start, end), "End boundary must be inclusive")
+        self.assertFalse(self._in_period(self._doc_date(before),   start, end))
+        self.assertFalse(self._in_period(self._doc_date(after),    start, end))
+        self.assertTrue(self._in_period(self._doc_date(alt_field), start, end), "_doc_date must check saleDate field")
+        self.assertTrue(self._in_period(self._doc_date(no_date),   start, end), "Undated docs must be included")
+
+
+def run_unit_tests() -> bool:
+    print("\n" + "=" * 60)
+    print("🧪 P&L Unit Tests")
+    print("=" * 60)
+    loader = unittest.TestLoader()
+    suite  = loader.loadTestsFromTestCase(PLFormulaTests)
+    runner = unittest.TextTestRunner(verbosity=2)
+    result = runner.run(suite)
+    return result.wasSuccessful()
+
 class BookkeepingAPITester:
-    def __init__(self, base_url="https://realtime-data-lab.preview.emergentagent.com"):
+    def __init__(self, base_url="https://bookkeeping-211e6.web.app"):
         self.base_url = base_url
         self.tests_run = 0
         self.tests_passed = 0
@@ -304,10 +387,16 @@ class BookkeepingAPITester:
 
 def main():
     """Main test execution"""
+    if len(sys.argv) > 1 and sys.argv[1] == "unit":
+        success = run_unit_tests()
+        return 0 if success else 1
+
+    unit_ok = run_unit_tests()
+
     tester = BookkeepingAPITester()
-    success = tester.run_all_tests()
-    
-    return 0 if success else 1
+    api_ok = tester.run_all_tests()
+
+    return 0 if (unit_ok and api_ok) else 1
 
 if __name__ == "__main__":
     exit_code = main()

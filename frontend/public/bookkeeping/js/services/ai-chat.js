@@ -4,8 +4,66 @@
 
 import { auth } from '../config/firebase.js';
 import { isDebtPayment, getSaleTotal } from '../utils/accounting.js';
+import accountantScheduler, { REPORT_TYPES } from './accountant-scheduler.js';
 
 const BACKEND_URL = window.BACKEND_URL || '';
+
+const SKILLS = {
+    general: {
+        id:          'general',
+        label:       'Advisor',
+        icon:        'fa-robot',
+        color:       '#6366f1',
+        endpoint:    '/api/ai/chat',
+        placeholder: 'Ask a business question...',
+        welcome: {
+            title: 'Business AI Assistant',
+            desc:  'Ask me anything about your business — sales trends, inventory advice, expense analysis, or strategic recommendations.',
+            suggestions: [
+                { icon: 'fa-chart-line', q: 'How are my sales performing this month?' },
+                { icon: 'fa-box',        q: 'Which products should I restock?' },
+                { icon: 'fa-piggy-bank', q: 'How can I reduce my expenses?' },
+                { icon: 'fa-heartbeat',  q: 'Give me a business health summary' },
+            ],
+        },
+    },
+    accountant: {
+        id:          'accountant',
+        label:       'Accountant',
+        icon:        'fa-calculator',
+        color:       '#059669',
+        endpoint:    '/api/ai/accountant',
+        placeholder: 'Ask about profit, taxes, expenses, liabilities...',
+        welcome: {
+            title: 'ChiefAccounts — AI Accountant',
+            desc:  'I have live access to your financial records. Ask me about profit & loss, Ghana VAT, expense categorisation, or debt management.',
+            suggestions: [
+                { icon: 'fa-chart-pie',      q: 'Prepare my profit and loss for this month' },
+                { icon: 'fa-file-invoice',   q: 'What is my estimated VAT liability?' },
+                { icon: 'fa-tags',           q: 'Find and classify my uncategorised expenses' },
+                { icon: 'fa-hand-holding-usd', q: 'Which debt should I pay off first?' },
+            ],
+        },
+    },
+    inventory: {
+        id:          'inventory',
+        label:       'Stock',
+        icon:        'fa-boxes',
+        color:       '#d97706',
+        endpoint:    '/api/ai/inventory',
+        placeholder: 'Ask about stock levels, reorders, suppliers...',
+        welcome: {
+            title: 'StockMaster — AI Inventory Manager',
+            desc:  'I have live access to your stock records. Ask me about inventory levels, reorder planning, ABC analysis, purchase orders, or dead stock.',
+            suggestions: [
+                { icon: 'fa-exclamation-triangle', q: 'Which products are running low or at risk of stockout?' },
+                { icon: 'fa-sort-amount-down',     q: 'Run an ABC analysis on my inventory' },
+                { icon: 'fa-shopping-cart',        q: 'What should I reorder right now?' },
+                { icon: 'fa-chart-bar',            q: 'Identify any dead stock in my inventory' },
+            ],
+        },
+    },
+};
 
 class AIChatService {
     constructor() {
@@ -19,6 +77,9 @@ class AIChatService {
         this._lastTapType = '';
         this._fabAttrObserver = null;
         this.launcherButtons = [];
+        this.activeSkill = 'general';
+        this._skillMessages = { general: [], accountant: [], inventory: [] };
+        this._schedulePanelOpen = false;
     }
 
     init(state) {
@@ -28,49 +89,181 @@ class AIChatService {
             this.bindEvents();
             this.injected = true;
         }
+        accountantScheduler.init(this._onScheduledReport.bind(this));
+        accountantScheduler.start();
+        this.updateFabBadge();
+    }
+
+    _skillTabsHTML() {
+        return Object.values(SKILLS).map(s => `
+            <button class="ai-skill-tab${s.id === this.activeSkill ? ' active' : ''}"
+                    data-skill="${s.id}"
+                    style="--skill-color:${s.color}"
+                    title="${s.label}">
+                <i class="fas ${s.icon}"></i>
+                <span>${s.label}</span>
+            </button>
+        `).join('');
+    }
+
+    _welcomeHTML(skillId) {
+        const s = SKILLS[skillId];
+        const w = s.welcome;
+        return `
+            <div class="ai-chat-welcome-icon" style="background:${s.color}20;color:${s.color}">
+                <i class="fas ${s.icon}"></i>
+            </div>
+            <h3>${w.title}</h3>
+            <p>${w.desc}</p>
+            <div class="ai-chat-suggestions" id="ai-chat-suggestions">
+                ${w.suggestions.map(sg => `
+                    <button class="ai-chat-suggestion" data-q="${sg.q}">
+                        <i class="fas ${sg.icon}"></i> ${sg.q}
+                    </button>
+                `).join('')}
+            </div>
+        `;
     }
 
     injectHTML() {
         const existing = document.getElementById('ai-chat-root');
         if (existing) existing.remove();
 
+        const skill = SKILLS[this.activeSkill];
+
         const root = document.createElement('div');
         root.id = 'ai-chat-root';
         root.innerHTML = `
             <div class="ai-chat-window" id="ai-chat-window">
-                <div class="ai-chat-header">
+                <div class="ai-chat-header" id="ai-chat-header" style="--skill-color:${skill.color}">
                     <div class="ai-chat-header-left">
-                        <div class="ai-chat-avatar"><i class="fas fa-robot"></i></div>
+                        <div class="ai-chat-avatar" id="ai-chat-avatar"><i class="fas ${skill.icon}"></i></div>
                         <div class="ai-chat-header-info">
-                            <h4>Business AI</h4>
-                            <span>Online</span>
+                            <h4 id="ai-chat-title">Business AI</h4>
+                            <span id="ai-chat-subtitle">Online</span>
                         </div>
                     </div>
                     <div class="ai-chat-header-actions">
+                        <button id="ai-schedule-btn" title="Automated reports"><i class="fas fa-clock"></i></button>
                         <button id="ai-chat-clear" title="Clear conversation"><i class="fas fa-trash-alt"></i></button>
                         <button id="ai-chat-close" title="Close"><i class="fas fa-times"></i></button>
                     </div>
                 </div>
 
+                <!-- Skill switcher tabs -->
+                <div class="ai-skill-tabs" id="ai-skill-tabs">
+                    ${this._skillTabsHTML()}
+                </div>
+
                 <div class="ai-chat-messages" id="ai-chat-messages">
                     <div class="ai-chat-welcome" id="ai-chat-welcome">
-                        <div class="ai-chat-welcome-icon"><i class="fas fa-robot"></i></div>
-                        <h3>Business AI Assistant</h3>
-                        <p>Ask me anything about your business — sales trends, inventory advice, expense analysis, or strategic recommendations.</p>
-                        <div class="ai-chat-suggestions" id="ai-chat-suggestions">
-                            <button class="ai-chat-suggestion" data-q="How are my sales performing this month?">
-                                <i class="fas fa-chart-line"></i> How are my sales performing this month?
-                            </button>
-                            <button class="ai-chat-suggestion" data-q="Which products should I restock?">
-                                <i class="fas fa-box"></i> Which products should I restock?
-                            </button>
-                            <button class="ai-chat-suggestion" data-q="How can I reduce my expenses?">
-                                <i class="fas fa-piggy-bank"></i> How can I reduce my expenses?
-                            </button>
-                            <button class="ai-chat-suggestion" data-q="Give me a business health summary">
-                                <i class="fas fa-heartbeat"></i> Give me a business health summary
-                            </button>
+                        ${this._welcomeHTML(this.activeSkill)}
+                    </div>
+                </div>
+
+                <!-- Schedule Panel -->
+                <div class="ai-schedule-panel" id="ai-schedule-panel">
+                    <div class="ai-schedule-panel-header">
+                        <span><i class="fas fa-clock"></i> Automated Reports</span>
+                        <button id="ai-schedule-close" title="Close"><i class="fas fa-times"></i></button>
+                    </div>
+                    <div class="ai-schedule-panel-body">
+
+                        <!-- Controls zone: always visible, scrolls independently if needed -->
+                        <div class="ai-schedule-controls">
+
+                            <!-- Email delivery section -->
+                            <div class="ai-schedule-email-section">
+                                <div class="ai-schedule-email-row">
+                                    <i class="fas fa-envelope" style="color:#0ea5e9;margin-right:8px;"></i>
+                                    <strong>Email Delivery</strong>
+                                </div>
+                                <div class="ai-schedule-email-preview">
+                                    <span id="sch-email-preview" class="ai-schedule-email-addr">—</span>
+                                    <small>Configured in <strong>Settings → Notifications</strong></small>
+                                </div>
+                                <div class="ai-schedule-email-actions">
+                                    <button class="ai-schedule-test-btn" id="sch-test-email" title="Send test email">
+                                        <i class="fas fa-paper-plane"></i> Test Email
+                                    </button>
+                                </div>
+                            </div>
+
+                            <!-- Daily P&L -->
+                            <div class="ai-schedule-section">
+                                <div class="ai-schedule-row">
+                                    <div class="ai-schedule-info">
+                                        <i class="fas fa-chart-line" style="color:#059669"></i>
+                                        <div><strong>Daily P&amp;L</strong><small>Revenue, COGS &amp; profit every evening</small></div>
+                                    </div>
+                                    <label class="ai-toggle-switch">
+                                        <input type="checkbox" id="sch-daily-enabled">
+                                        <span class="ai-toggle-slider"></span>
+                                    </label>
+                                </div>
+                                <div class="ai-schedule-options" id="sch-daily-opts">
+                                    <label class="ai-schedule-field">Send time <input type="time" id="sch-daily-time" value="20:00"></label>
+                                    <button class="ai-schedule-send-now-btn" data-type="daily"><i class="fas fa-bolt"></i> Send Now</button>
+                                </div>
+                            </div>
+
+                            <!-- Weekly -->
+                            <div class="ai-schedule-section">
+                                <div class="ai-schedule-row">
+                                    <div class="ai-schedule-info">
+                                        <i class="fas fa-tags" style="color:#d97706"></i>
+                                        <div><strong>Weekly Report</strong><small>P&amp;L + VAT + expense breakdown</small></div>
+                                    </div>
+                                    <label class="ai-toggle-switch">
+                                        <input type="checkbox" id="sch-weekly-enabled">
+                                        <span class="ai-toggle-slider"></span>
+                                    </label>
+                                </div>
+                                <div class="ai-schedule-options" id="sch-weekly-opts">
+                                    <label class="ai-schedule-field">Day
+                                        <select id="sch-weekly-day">
+                                            <option value="1">Monday</option>
+                                            <option value="2">Tuesday</option>
+                                            <option value="3">Wednesday</option>
+                                            <option value="4">Thursday</option>
+                                            <option value="5">Friday</option>
+                                        </select>
+                                    </label>
+                                    <label class="ai-schedule-field">Time <input type="time" id="sch-weekly-time" value="09:00"></label>
+                                    <button class="ai-schedule-send-now-btn" data-type="weekly"><i class="fas fa-bolt"></i> Send Now</button>
+                                </div>
+                            </div>
+
+                            <!-- Monthly -->
+                            <div class="ai-schedule-section">
+                                <div class="ai-schedule-row">
+                                    <div class="ai-schedule-info">
+                                        <i class="fas fa-file-invoice" style="color:#7c3aed"></i>
+                                        <div><strong>Monthly Summary</strong><small>Full P&amp;L + VAT + GRA filing reminder</small></div>
+                                    </div>
+                                    <label class="ai-toggle-switch">
+                                        <input type="checkbox" id="sch-monthly-enabled">
+                                        <span class="ai-toggle-slider"></span>
+                                    </label>
+                                </div>
+                                <div class="ai-schedule-options" id="sch-monthly-opts">
+                                    <label class="ai-schedule-field">Day of month <input type="number" id="sch-monthly-day" min="1" max="28" value="1"></label>
+                                    <label class="ai-schedule-field">Time <input type="time" id="sch-monthly-time" value="08:00"></label>
+                                    <button class="ai-schedule-send-now-btn" data-type="monthly"><i class="fas fa-bolt"></i> Send Now</button>
+                                </div>
+                            </div>
+
+                            <button class="ai-schedule-save-btn" id="ai-schedule-save"><i class="fas fa-check"></i> Save &amp; Enable</button>
+                            <div id="ai-schedule-status" style="display:none;margin:8px 0;padding:8px 12px;border-radius:6px;font-size:13px;"></div>
+
+                        </div><!-- /.ai-schedule-controls -->
+
+                        <!-- History zone: grows and scrolls independently -->
+                        <div class="ai-schedule-history">
+                            <h5>Recent Reports</h5>
+                            <div id="ai-schedule-history-list"><p class="ai-schedule-empty">No reports generated yet.</p></div>
                         </div>
+
                     </div>
                 </div>
 
@@ -81,9 +274,9 @@ class AIChatService {
                             <i class="fas fa-paper-plane"></i>
                         </button>
                     </div>
-                    <div class="ai-chat-context">
+                    <div class="ai-chat-context" id="ai-chat-context">
                         <i class="fas fa-database"></i>
-                        <span>Answers use structured metrics from your loaded sales, inventory, and purchase orders</span>
+                        <span id="ai-chat-context-text">Answers use structured metrics from your loaded sales, inventory, and purchase orders</span>
                     </div>
                 </div>
             </div>
@@ -91,14 +284,23 @@ class AIChatService {
         document.body.appendChild(root);
 
         this.elements = {
-            window: document.getElementById('ai-chat-window'),
-            messages: document.getElementById('ai-chat-messages'),
-            welcome: document.getElementById('ai-chat-welcome'),
-            input: document.getElementById('ai-chat-input'),
-            sendBtn: document.getElementById('ai-chat-send'),
-            closeBtn: document.getElementById('ai-chat-close'),
-            clearBtn: document.getElementById('ai-chat-clear'),
-            suggestions: document.getElementById('ai-chat-suggestions'),
+            window:        document.getElementById('ai-chat-window'),
+            messages:      document.getElementById('ai-chat-messages'),
+            welcome:       document.getElementById('ai-chat-welcome'),
+            input:         document.getElementById('ai-chat-input'),
+            sendBtn:       document.getElementById('ai-chat-send'),
+            closeBtn:      document.getElementById('ai-chat-close'),
+            clearBtn:      document.getElementById('ai-chat-clear'),
+            suggestions:   document.getElementById('ai-chat-suggestions'),
+            skillTabs:     document.getElementById('ai-skill-tabs'),
+            contextText:   document.getElementById('ai-chat-context-text'),
+            header:        document.getElementById('ai-chat-header'),
+            avatar:        document.getElementById('ai-chat-avatar'),
+            title:         document.getElementById('ai-chat-title'),
+            subtitle:      document.getElementById('ai-chat-subtitle'),
+            scheduleBtn:   document.getElementById('ai-schedule-btn'),
+            schedulePanel: document.getElementById('ai-schedule-panel'),
+            historyList:   document.getElementById('ai-schedule-history-list'),
         };
 
         // Defensive: ensure FAB is never treated as disabled (especially in native app webviews).
@@ -176,6 +378,27 @@ class AIChatService {
         bindTap(closeBtn, () => this.close());
         bindTap(clearBtn, () => this.clearConversation());
         bindTap(sendBtn, () => this.send());
+        bindTap(this.elements.scheduleBtn, () => {
+            if (this.activeSkill !== 'accountant') this.switchSkill('accountant');
+            this._openSchedulePanel();
+        });
+        bindTap(document.getElementById('ai-schedule-close'), () => this._closeSchedulePanel());
+        bindTap(document.getElementById('ai-schedule-save'), () => this._saveScheduleFromUI());
+
+        ['daily', 'weekly', 'monthly'].forEach(type => {
+            const toggle = document.getElementById(`sch-${type}-enabled`);
+            const opts   = document.getElementById(`sch-${type}-opts`);
+            if (toggle && opts) toggle.addEventListener('change', () => opts.classList.toggle('visible', toggle.checked));
+        });
+
+        // Skill tab switching
+        const skillTabs = this.elements.skillTabs;
+        if (skillTabs) {
+            skillTabs.addEventListener('click', (e) => {
+                const tab = e.target.closest('[data-skill]');
+                if (tab) this.switchSkill(tab.dataset.skill);
+            });
+        }
 
         input.addEventListener('keydown', (e) => {
             if (e.key === 'Enter' && !e.shiftKey) {
@@ -252,10 +475,92 @@ class AIChatService {
     }
 
     clearConversation() {
+        this._skillMessages[this.activeSkill] = [];
         this.messages = [];
         this.elements.messages.innerHTML = '';
+        this.elements.welcome.innerHTML = this._welcomeHTML(this.activeSkill);
         this.elements.messages.appendChild(this.elements.welcome);
         this.elements.welcome.style.display = 'flex';
+        this.elements.suggestions = document.getElementById('ai-chat-suggestions');
+        this._rebindSuggestions();
+    }
+
+    _rebindSuggestions() {
+        const s = this.elements.suggestions;
+        if (!s) return;
+        s.replaceWith(s.cloneNode(true));
+        this.elements.suggestions = document.getElementById('ai-chat-suggestions');
+        this.elements.suggestions?.addEventListener('click', (e) => {
+            const btn = e.target.closest('.ai-chat-suggestion');
+            if (!btn) return;
+            this.elements.input.value = btn.dataset.q;
+            this.elements.sendBtn.disabled = false;
+            this.send();
+        });
+    }
+
+    switchSkill(skillId) {
+        if (!SKILLS[skillId] || skillId === this.activeSkill) return;
+
+        // Save current conversation
+        this._skillMessages[this.activeSkill] = [...this.messages];
+
+        this.activeSkill = skillId;
+        const skill = SKILLS[skillId];
+
+        // Update header
+        if (this.elements.header)   this.elements.header.style.setProperty('--skill-color', skill.color);
+        if (this.elements.avatar)   this.elements.avatar.innerHTML = `<i class="fas ${skill.icon}"></i>`;
+        if (this.elements.title)    this.elements.title.textContent = skill.label === 'Accountant' ? 'ChiefAccounts' : 'Business AI';
+        if (this.elements.subtitle) this.elements.subtitle.textContent = 'Online';
+        if (this.elements.input)    this.elements.input.placeholder = skill.placeholder;
+
+        // Update context footer
+        if (this.elements.contextText) {
+            this.elements.contextText.textContent = skillId === 'accountant'
+                ? 'Live access to your Firestore records — no data size limits'
+                : 'Answers use structured metrics from your loaded sales, inventory, and purchase orders';
+        }
+
+        // Update tab active state
+        document.querySelectorAll('.ai-skill-tab').forEach(t => {
+            t.classList.toggle('active', t.dataset.skill === skillId);
+        });
+
+        if (skillId !== 'accountant' && this._schedulePanelOpen) {
+            this._closeSchedulePanel();
+        }
+
+        // Restore or clear conversation for this skill
+        this.messages = [...(this._skillMessages[skillId] || [])];
+        const msgContainer = this.elements.messages;
+        msgContainer.innerHTML = '';
+
+        if (this.messages.length === 0) {
+            this.elements.welcome.innerHTML = this._welcomeHTML(skillId);
+            msgContainer.appendChild(this.elements.welcome);
+            this.elements.welcome.style.display = 'flex';
+            this.elements.suggestions = document.getElementById('ai-chat-suggestions');
+            this._rebindSuggestions();
+        } else {
+            this.elements.welcome.style.display = 'none';
+            this.messages.forEach(m => this._renderSavedMessage(m));
+        }
+    }
+
+    _renderSavedMessage(m) {
+        const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        const icon = m.role === 'user' ? 'fa-user' : 'fa-robot';
+        const formattedText = m.role === 'assistant' ? this.formatMarkdown(m.text) : this.escapeHtml(m.text);
+        const msg = document.createElement('div');
+        msg.className = `ai-chat-msg ${m.role}`;
+        msg.innerHTML = `
+            <div class="ai-chat-msg-avatar"><i class="fas ${icon}"></i></div>
+            <div>
+                <div class="ai-chat-msg-bubble">${formattedText}</div>
+                <div class="ai-chat-msg-time">${time}</div>
+            </div>`;
+        this.elements.messages.appendChild(msg);
     }
 
     autoResize(textarea) {
@@ -372,15 +677,17 @@ class AIChatService {
                 console.warn('AI chat: ID token unavailable', tokErr);
             }
 
-            const response = await fetch(`${BACKEND_URL}/api/ai/chat`, {
+            const skill = SKILLS[this.activeSkill];
+            const endpoint = `${BACKEND_URL}${skill.endpoint}`;
+
+            const body = this.activeSkill === 'accountant'
+                ? { question: text, history }
+                : { question: text, context: this.getBusinessContext(), datasets: this.getAgentDatasets(), history };
+
+            const response = await fetch(endpoint, {
                 method: 'POST',
                 headers,
-                body: JSON.stringify({
-                    question: text,
-                    context: this.getBusinessContext(),
-                    datasets: this.getAgentDatasets(),
-                    history,
-                })
+                body: JSON.stringify(body),
             });
 
             if (response.status === 401) {
@@ -393,7 +700,14 @@ class AIChatService {
 
             const data = await response.json();
             this.hideTyping();
-            this.appendMessage('assistant', data.response || 'No response received.');
+
+            const reply = data.response || 'No response received.';
+            this.appendMessage('assistant', reply);
+
+            // Show tools-called footnote for accountant
+            if (this.activeSkill === 'accountant' && data.tools_called?.length) {
+                this._appendToolsFootnote(data.tools_called, data.steps);
+            }
         } catch (err) {
             this.hideTyping();
             this.appendError(err.message === 'Failed to fetch'
@@ -440,6 +754,24 @@ class AIChatService {
     hideTyping() {
         const el = document.getElementById('ai-chat-typing');
         if (el) el.remove();
+    }
+
+    _appendToolsFootnote(tools, steps) {
+        const unique = [...new Set(tools)];
+        const toolLabels = {
+            get_financial_summary:  'P&L summary',
+            get_sales_breakdown:    'Sales breakdown',
+            get_expense_breakdown:  'Expense breakdown',
+            get_liabilities:        'Liabilities',
+            get_vat_summary:        'VAT summary',
+            classify_expense:       'Expense classifier',
+        };
+        const labels = unique.map(t => toolLabels[t] || t).join(', ');
+        const el = document.createElement('div');
+        el.className = 'ai-chat-footnote';
+        el.innerHTML = `<i class="fas fa-database"></i> Live data read: ${labels} · ${steps} step${steps !== 1 ? 's' : ''}`;
+        this.elements.messages.appendChild(el);
+        this.scrollToBottom();
     }
 
     appendError(text) {
@@ -503,6 +835,291 @@ class AIChatService {
         this.elements.input.value = question;
         this.elements.sendBtn.disabled = false;
         this.send();
+    }
+
+    // ── Scheduler methods ──────────────────────────────────────────────────
+
+    _onScheduledReport(report) {
+        this.updateFabBadge();
+        if (this._schedulePanelOpen) this._renderReportHistory();
+    }
+
+    updateFabBadge() {
+        const fab = document.getElementById('ai-chat-fab');
+        if (!fab) return;
+        let badge = fab.querySelector('.fab-badge');
+        if (!badge) {
+            badge = document.createElement('span');
+            badge.className = 'fab-badge';
+            fab.appendChild(badge);
+        }
+        const count = accountantScheduler.getUnreadCount();
+        badge.textContent = count > 9 ? '9+' : String(count);
+        badge.style.display = count > 0 ? 'flex' : 'none';
+    }
+
+    _openSchedulePanel() {
+        const panel = this.elements.schedulePanel;
+        if (!panel) return;
+        this._schedulePanelOpen = true;
+        this._loadScheduleIntoUI();
+        this._loadEmailPrefsFromBackend();
+        this._renderReportHistory();
+        panel.classList.add('open');
+        accountantScheduler.clearUnread();
+        this.updateFabBadge();
+        this._bindSchedulePanelButtons();
+    }
+
+    _closeSchedulePanel() {
+        const panel = this.elements.schedulePanel;
+        if (!panel) return;
+        this._schedulePanelOpen = false;
+        panel.classList.remove('open');
+    }
+
+    _loadScheduleIntoUI() {
+        const cfg = accountantScheduler.getConfig();
+        const setVal = (id, val) => {
+            const el = document.getElementById(id);
+            if (!el) return;
+            if (typeof val === 'boolean') el.checked = val; else el.value = val;
+        };
+        const pad = n => String(n).padStart(2, '0');
+        const showOpts = (type, on) => {
+            const opts = document.getElementById(`sch-${type}-opts`);
+            if (opts) opts.classList.toggle('visible', on);
+        };
+
+        setVal('sch-daily-enabled',  cfg.daily_pl.enabled);
+        setVal('sch-daily-time',     `${pad(cfg.daily_pl.hour)}:${pad(cfg.daily_pl.minute)}`);
+        showOpts('daily', cfg.daily_pl.enabled);
+
+        setVal('sch-weekly-enabled', cfg.weekly_expense.enabled);
+        setVal('sch-weekly-day',     String(cfg.weekly_expense.day));
+        setVal('sch-weekly-time',    `${pad(cfg.weekly_expense.hour)}:${pad(cfg.weekly_expense.minute)}`);
+        showOpts('weekly', cfg.weekly_expense.enabled);
+
+        setVal('sch-monthly-enabled', cfg.monthly_vat.enabled);
+        setVal('sch-monthly-day',     String(cfg.monthly_vat.dayOfMonth));
+        setVal('sch-monthly-time',    `${pad(cfg.monthly_vat.hour)}:${pad(cfg.monthly_vat.minute)}`);
+        showOpts('monthly', cfg.monthly_vat.enabled);
+    }
+
+    _getSettingsEmail() {
+        return document.getElementById('notification-email')?.value?.trim() || '';
+    }
+
+    _getSettingsBusinessName() {
+        return document.getElementById('business-name')?.value?.trim() || 'Your Business';
+    }
+
+    async _loadEmailPrefsFromBackend() {
+        // Show the email address from main settings
+        const email = this._getSettingsEmail();
+        const preview = document.getElementById('sch-email-preview');
+        if (preview) {
+            preview.textContent = email || 'No email set in Settings';
+            preview.classList.toggle('ai-schedule-email-addr--empty', !email);
+        }
+
+        // Load toggle states from backend prefs
+        const user = auth.currentUser;
+        if (!user) return;
+        try {
+            const token = await user.getIdToken();
+            const resp = await fetch(`${window.BACKEND_URL || ''}/api/reports/preferences`, {
+                headers: { Authorization: `Bearer ${token}` },
+            });
+            if (!resp.ok) return;
+            const prefs = await resp.json();
+            const sync = (id, val) => {
+                const el = document.getElementById(id);
+                if (el && val !== undefined) el.checked = val;
+            };
+            sync('sch-daily-enabled',   prefs.daily_enabled);
+            sync('sch-weekly-enabled',  prefs.weekly_enabled);
+            sync('sch-monthly-enabled', prefs.monthly_enabled);
+            ['daily', 'weekly', 'monthly'].forEach(t => {
+                const el = document.getElementById(`sch-${t}-enabled`);
+                const opts = document.getElementById(`sch-${t}-opts`);
+                if (opts) opts.classList.toggle('visible', el?.checked || false);
+            });
+        } catch (e) {
+            console.warn('[Schedule] Could not load report prefs:', e);
+        }
+    }
+
+    async _saveScheduleFromUI() {
+        const getTime = (id) => {
+            const el = document.getElementById(id);
+            if (!el || !el.value) return [7, 0];
+            const [h, m] = el.value.split(':').map(Number);
+            return [h || 0, m || 0];
+        };
+        const checked = (id) => document.getElementById(id)?.checked || false;
+        const numVal  = (id, fallback) => parseInt(document.getElementById(id)?.value || fallback, 10) || fallback;
+
+        const [dh, dm] = getTime('sch-daily-time');
+        const [wh, wm] = getTime('sch-weekly-time');
+        const [mh, mm] = getTime('sch-monthly-time');
+
+        accountantScheduler.saveConfig({
+            daily_pl:       { enabled: checked('sch-daily-enabled'),   hour: dh, minute: dm },
+            weekly_expense: { enabled: checked('sch-weekly-enabled'),  day: numVal('sch-weekly-day', 1), hour: wh, minute: wm },
+            monthly_vat:    { enabled: checked('sch-monthly-enabled'), dayOfMonth: numVal('sch-monthly-day', 1), hour: mh, minute: mm },
+        });
+
+        const btn = document.getElementById('ai-schedule-save');
+        if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Saving…'; }
+
+        const email = this._getSettingsEmail();
+        const businessName = this._getSettingsBusinessName();
+
+        try {
+            const user = auth.currentUser;
+            if (user) {
+                const token = await user.getIdToken();
+                await fetch(`${window.BACKEND_URL || ''}/api/reports/preferences`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+                    body: JSON.stringify({
+                        email,
+                        business_name: businessName,
+                        daily_enabled:   checked('sch-daily-enabled'),
+                        weekly_enabled:  checked('sch-weekly-enabled'),
+                        monthly_enabled: checked('sch-monthly-enabled'),
+                    }),
+                });
+            }
+        } catch (e) {
+            console.warn('[Schedule] Failed to save report prefs:', e);
+        }
+
+        if (btn) {
+            btn.innerHTML = '<i class="fas fa-check"></i> Saved!';
+            setTimeout(() => { btn.innerHTML = '<i class="fas fa-check"></i> Save &amp; Enable'; btn.disabled = false; }, 1800);
+        }
+    }
+
+    _showScheduleStatus(msg, isError = false) {
+        const el = document.getElementById('ai-schedule-status');
+        if (!el) return;
+        el.style.display = 'block';
+        el.style.background = isError ? '#fee2e2' : '#d1fae5';
+        el.style.color = isError ? '#991b1b' : '#065f46';
+        el.textContent = msg;
+        setTimeout(() => { el.style.display = 'none'; }, 4000);
+    }
+
+    _bindSchedulePanelButtons() {
+        // Test email button
+        const testBtn = document.getElementById('sch-test-email');
+        if (testBtn && !testBtn._bound) {
+            testBtn._bound = true;
+            testBtn.addEventListener('click', async () => {
+                const email = this._getSettingsEmail();
+                if (!email) { this._showScheduleStatus('No email set — add one in Settings → Notifications.', true); return; }
+                testBtn.disabled = true;
+                testBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Sending…';
+                try {
+                    const user = auth.currentUser;
+                    const token = await user?.getIdToken();
+                    const resp = await fetch(`${window.BACKEND_URL || ''}/api/email/test`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+                        body: JSON.stringify({ recipient: email }),
+                    });
+                    this._showScheduleStatus(resp.ok ? `Test email sent to ${email}` : 'Send failed — check server logs.', !resp.ok);
+                } catch (e) {
+                    this._showScheduleStatus('Could not reach backend.', true);
+                } finally {
+                    testBtn.disabled = false;
+                    testBtn.innerHTML = '<i class="fas fa-paper-plane"></i> Test Email';
+                }
+            });
+        }
+
+        // Send now buttons
+        document.querySelectorAll('.ai-schedule-send-now-btn').forEach(btn => {
+            if (btn._bound) return;
+            btn._bound = true;
+            btn.addEventListener('click', async () => {
+                const type = btn.dataset.type;
+                const email = this._getSettingsEmail();
+                if (!email) { this._showScheduleStatus('No email set — add one in Settings → Notifications.', true); return; }
+                btn.disabled = true;
+                btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Sending…';
+                try {
+                    const user = auth.currentUser;
+                    const token = await user?.getIdToken();
+                    const resp = await fetch(`${window.BACKEND_URL || ''}/api/reports/send-now`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+                        body: JSON.stringify({ report_type: type }),
+                    });
+                    const result = await resp.json().catch(() => ({}));
+                    const ok = resp.ok && result.status === 'sent';
+                    this._showScheduleStatus(
+                        ok ? `${type.charAt(0).toUpperCase() + type.slice(1)} report sent to ${email}` : (result.detail || 'Send failed.'),
+                        !ok
+                    );
+                    if (ok) this._renderReportHistory();
+                } catch (e) {
+                    this._showScheduleStatus('Could not reach backend.', true);
+                } finally {
+                    btn.disabled = false;
+                    btn.innerHTML = '<i class="fas fa-bolt"></i> Send Now';
+                }
+            });
+        });
+    }
+
+    _renderReportHistory() {
+        const list = this.elements.historyList;
+        if (!list) return;
+        const reports = accountantScheduler.getRecentReports();
+        if (!reports.length) {
+            list.innerHTML = '<p class="ai-schedule-empty">No reports generated yet.</p>';
+            return;
+        }
+        list.innerHTML = reports.slice(0, 5).map(r => {
+            const info    = REPORT_TYPES[r.type] || { color: '#059669', icon: 'fa-file' };
+            const date    = new Date(r.generatedAt);
+            const dateStr = date.toLocaleDateString([], { month: 'short', day: 'numeric' }) +
+                            ' · ' + date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+            // Build a structured one-liner from the AI text instead of a raw slice
+            const text = r.text || '';
+            const netMatch   = text.match(/Net Profit[^₵\d]*₵([\d,]+(?:\.\d+)?)/i);
+            const revMatch   = text.match(/Revenue[^₵\d]*₵([\d,]+(?:\.\d+)?)/i);
+            const preview = netMatch
+                ? `Net Profit ₵${netMatch[1]}${revMatch ? ' · Revenue ₵' + revMatch[1] : ''}`
+                : text.replace(/[#*`]/g, '').replace(/\n+/g, ' ').trim().slice(0, 90) + (text.length > 90 ? '…' : '');
+
+            return `
+                <div class="ai-report-card">
+                    <div class="ai-report-card-header">
+                        <span style="color:${info.color}"><i class="fas ${info.icon}"></i> ${r.label}</span>
+                        <small>${dateStr}</small>
+                    </div>
+                    <p class="ai-report-card-preview">${this.escapeHtml(preview)}</p>
+                    <button class="ai-report-open-btn" data-report-text="${this.escapeHtml(text)}">
+                        Open in chat <i class="fas fa-arrow-right"></i>
+                    </button>
+                </div>`;
+        }).join('');
+
+        list.querySelectorAll('.ai-report-open-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const text = btn.dataset.reportText;
+                if (!text) return;
+                this._closeSchedulePanel();
+                if (this.activeSkill !== 'accountant') this.switchSkill('accountant');
+                this.elements.welcome.style.display = 'none';
+                this.appendMessage('assistant', text);
+            });
+        });
     }
 }
 

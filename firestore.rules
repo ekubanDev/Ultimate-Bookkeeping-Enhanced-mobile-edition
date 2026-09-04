@@ -36,82 +36,96 @@ service cloud.firestore {
         && p.get('assignedOutlet', '') == outletId;
     }
 
-    // For root-level legacy documents: if createdBy exists it must match; if absent
-    // the document is treated as belonging to any authenticated user (migration path).
+    // For root-level legacy documents: checks the existing document's createdBy.
+    // Safe for reads and deletes (resource.data exists).
     function ownedByMe() {
       return isAuth()
         && resource.data.get('createdBy', request.auth.uid) == request.auth.uid;
     }
 
+    // Checks the incoming write payload's createdBy.
+    // Only valid for create/update (request.resource exists); never use for delete.
     function writtenByMe() {
       return isAuth()
         && request.resource.data.get('createdBy', request.auth.uid) == request.auth.uid;
     }
 
     // ── Root-level legacy collections (scoped by createdBy field) ────────────
-    // These are the original flat collections before user-scoped paths were adopted.
-    // New writes must include createdBy; reads are gated to the owning user only.
+    // New writes must include createdBy; reads/deletes are gated via ownedByMe().
+    // delete uses ownedByMe() (reads existing doc) because request.resource is null on delete.
 
     match /inventory/{docId} {
-      allow read:   if ownedByMe();
-      allow write:  if writtenByMe();
+      allow read:           if ownedByMe();
+      allow create, update: if writtenByMe();
+      allow delete:         if ownedByMe();
     }
 
     match /sales/{docId} {
-      allow read:   if ownedByMe();
-      allow write:  if writtenByMe();
+      allow read:           if ownedByMe();
+      allow create, update: if writtenByMe();
+      allow delete:         if ownedByMe();
     }
 
     match /expenses/{docId} {
-      allow read:   if ownedByMe();
-      allow write:  if writtenByMe();
+      allow read:           if ownedByMe();
+      allow create, update: if writtenByMe();
+      allow delete:         if ownedByMe();
     }
 
     match /customers/{docId} {
-      allow read:   if ownedByMe();
-      allow write:  if writtenByMe();
+      allow read:           if ownedByMe();
+      allow create, update: if writtenByMe();
+      allow delete:         if ownedByMe();
     }
 
     match /liabilities/{docId} {
-      allow read:   if ownedByMe();
-      allow write:  if writtenByMe();
+      allow read:           if ownedByMe();
+      allow create, update: if writtenByMe();
+      allow delete:         if ownedByMe();
     }
 
     match /suppliers/{docId} {
-      allow read:   if ownedByMe();
-      allow write:  if writtenByMe();
+      allow read:           if ownedByMe();
+      allow create, update: if writtenByMe();
+      allow delete:         if ownedByMe();
     }
 
     match /purchase_orders/{docId} {
-      allow read:   if ownedByMe();
-      allow write:  if writtenByMe();
+      allow read:           if ownedByMe();
+      allow create, update: if writtenByMe();
+      allow delete:         if ownedByMe();
     }
 
     match /payment_transactions/{docId} {
-      allow read:   if ownedByMe();
-      allow write:  if writtenByMe();
+      allow read:           if ownedByMe();
+      allow create, update: if writtenByMe();
+      allow delete:         if ownedByMe();
     }
 
     match /recurring_expenses/{docId} {
-      allow read:   if ownedByMe();
-      allow write:  if writtenByMe();
+      allow read:           if ownedByMe();
+      allow create, update: if writtenByMe();
+      allow delete:         if ownedByMe();
     }
 
     // Catch-all for any other root-level non-user collections (legacy safety net)
     match /{collection}/{docId} {
-      allow read:  if ownedByMe() && collection != 'users';
-      allow write: if writtenByMe() && collection != 'users';
+      allow read:           if ownedByMe() && collection != 'users';
+      allow create, update: if writtenByMe() && collection != 'users';
+      allow delete:         if ownedByMe() && collection != 'users';
     }
 
     // ── Top-level outlets collection (legacy) ────────────────────────────────
 
     match /outlets/{outletId} {
-      allow read:  if ownedByMe();
-      allow write: if writtenByMe();
+      allow read:           if ownedByMe();
+      allow create, update: if writtenByMe();
+      allow delete:         if ownedByMe();
 
       match /{sub}/{docId} {
-        allow read:  if ownedByMe();
-        allow write: if writtenByMe();
+        allow read:           if ownedByMe();
+        allow create, update: if writtenByMe();
+        allow delete:         if ownedByMe();
       }
     }
 
