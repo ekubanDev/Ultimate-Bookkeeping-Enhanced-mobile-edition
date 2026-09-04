@@ -5,6 +5,7 @@
 
 import { state } from '../utils/state.js';
 import { Utils } from '../utils/utils.js';
+import { getSaleTotal, isDebtPayment } from '../utils/accounting.js';
 
 class ProfitAnalysisService {
     /** Normalize date to YYYY-MM-DD for filtering */
@@ -164,58 +165,74 @@ class ProfitAnalysisService {
     }
 
     /**
-     * Get overall business profitability summary
-     * @param {{start:string,end:string}} dateRange - Optional {start,end} as YYYY-MM-DD. When provided, filters sales and expenses to match dashboard.
+     * Get overall business profitability summary.
+     * Revenue and COGS are sale-centric (all sales, not just those matched to current
+     * products) so deleted/renamed products don't silently drop from the totals.
+     * Net Profit follows the canonical formula: Gross Profit − OpEx − Debt Payments.
+     * @param {{start:string,end:string}} dateRange - Optional {start,end} as YYYY-MM-DD
      */
     getOverallSummary(dateRange = null) {
-        const analysis = this.getAllProductsAnalysis(dateRange);
-        
-        const totalRevenue = analysis.reduce((sum, p) => sum + p.totalRevenue, 0);
-        const totalCOGS = analysis.reduce((sum, p) => sum + p.totalCostOfGoodsSold, 0);
-        const totalProfit = totalRevenue - totalCOGS;
-        const totalInventoryValue = analysis.reduce((sum, p) => sum + p.inventoryValue, 0);
-        const totalPotentialProfit = analysis.reduce((sum, p) => sum + p.potentialProfit, 0);
+        // Build product cost map once for COGS fallback
+        const productCostMap = Object.fromEntries(
+            state.allProducts.map(p => [p.name, parseFloat(p.cost) || 0])
+        );
 
-        // Get operating expenses only (debt payments are balance sheet, not P&L)
-        const isOperating = (e) => {
-            const type = (e.expenseType || '').toLowerCase();
-            const cat = (e.category || '').toLowerCase();
-            return type !== 'liability_payment'
-                && cat !== 'debt payment'
-                && cat !== 'loan repayment';
-        };
-
-        let totalExpenses;
-        if (dateRange && dateRange.start && dateRange.end) {
-            totalExpenses = state.allExpenses.filter(isOperating).reduce((sum, e) => {
-                const d = this._getDateStr(e);
-                if (!d || d < dateRange.start || d > dateRange.end) return sum;
-                const amount = parseFloat(e.amount);
-                return sum + (isNaN(amount) ? 0 : amount);
-            }, 0);
-        } else {
-            totalExpenses = state.allExpenses.filter(isOperating).reduce((sum, e) => {
-                const amount = parseFloat(e.amount);
-                return sum + (isNaN(amount) ? 0 : amount);
-            }, 0);
+        // Revenue and COGS iterate all sales (sale-centric), not just matched products
+        let sales = state.allSales;
+        if (dateRange?.start && dateRange?.end) {
+            sales = sales.filter(s => {
+                const d = this._getDateStr(s);
+                return d && d >= dateRange.start && d <= dateRange.end;
+            });
         }
 
-        const netProfit = totalProfit - totalExpenses;
-        const grossMargin = totalRevenue > 0 ? ((totalProfit / totalRevenue) * 100) : 0;
-        const netMargin = totalRevenue > 0 ? ((netProfit / totalRevenue) * 100) : 0;
+        const totalRevenue = sales.reduce((sum, s) => sum + getSaleTotal(s), 0);
+        const totalCOGS = sales.reduce((sum, s) => {
+            const qty      = parseFloat(s.quantity) || 0;
+            const snapshot = parseFloat(s.cost);
+            const cost     = (Number.isFinite(snapshot) && snapshot > 0)
+                ? snapshot
+                : (productCostMap[s.product] ?? 0);
+            return sum + qty * cost;
+        }, 0);
+        const grossProfit = totalRevenue - totalCOGS;
+
+        // Expenses: split operating vs debt payments
+        let expenses = state.allExpenses;
+        if (dateRange?.start && dateRange?.end) {
+            expenses = expenses.filter(e => {
+                const d = this._getDateStr(e);
+                return d && d >= dateRange.start && d <= dateRange.end;
+            });
+        }
+        const totalExpenses      = expenses.filter(e => !isDebtPayment(e))
+            .reduce((sum, e) => sum + (parseFloat(e.amount) || 0), 0);
+        // Supplier payments tracked separately for visibility; not deducted — cost already in COGS.
+        const totalDebtPayments  = expenses.filter(e =>  isDebtPayment(e))
+            .reduce((sum, e) => sum + (parseFloat(e.amount) || 0), 0);
+
+        const netProfit  = grossProfit - totalExpenses;
+        const grossMargin = totalRevenue > 0 ? (grossProfit / totalRevenue) * 100 : 0;
+        const netMargin   = totalRevenue > 0 ? (netProfit  / totalRevenue) * 100 : 0;
+
+        // Inventory metrics still come from product-level analysis
+        const analysis = this.getAllProductsAnalysis(dateRange);
+        const totalInventoryValue  = analysis.reduce((sum, p) => sum + p.inventoryValue,   0);
+        const totalPotentialProfit = analysis.reduce((sum, p) => sum + p.potentialProfit,  0);
 
         return {
             totalRevenue,
             totalCOGS,
-            grossProfit: totalProfit,
+            grossProfit,
             totalExpenses,
+            totalDebtPayments,
             netProfit,
             grossMargin: grossMargin.toFixed(2),
-            netMargin: netMargin.toFixed(2),
+            netMargin:   netMargin.toFixed(2),
             totalInventoryValue,
             totalPotentialProfit,
-            productsAnalyzed: analysis.length,
-            profitableProducts: analysis.filter(p => parseFloat(p.profitMargin) > 0).length,
+            productsAnalyzed:     analysis.length,
+            profitableProducts:   analysis.filter(p => parseFloat(p.profitMargin) > 0).length,
             unprofitableProducts: analysis.filter(p => parseFloat(p.profitMargin) <= 0).length
         };
     }

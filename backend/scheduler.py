@@ -24,20 +24,11 @@ def _init_firebase():
     global _firestore_db
     if _firestore_db is not None:
         return _firestore_db
-
     try:
-        import firebase_admin
-        from firebase_admin import credentials, firestore
-
-        if not firebase_admin._apps:
-            sa_path = os.environ.get("FIREBASE_SERVICE_ACCOUNT_PATH", "")
-            if sa_path and os.path.isfile(sa_path):
-                cred = credentials.Certificate(sa_path)
-                firebase_admin.initialize_app(cred)
-            else:
-                firebase_admin.initialize_app()
-
-        _firestore_db = firestore.client()
+        from firebase_auth import ensure_firebase_admin_app
+        from firebase_admin import firestore
+        if ensure_firebase_admin_app():
+            _firestore_db = firestore.client()
         return _firestore_db
     except Exception as exc:
         logger.warning("Scheduler: Firebase init failed — %s", exc)
@@ -166,10 +157,12 @@ async def _stock_alert_job():
         business_name = prefs.get("business_name", "Your Business")
         try:
             problem_products = []
-            for doc in db.collection("products").stream():
-                p = doc.to_dict()
-                if p.get("createdBy", uid) != uid:
-                    continue
+            seen_ids: set = set()
+
+            def _check_product(doc_id, p):
+                if doc_id in seen_ids:
+                    return
+                seen_ids.add(doc_id)
                 qty = float(p.get("quantity", 0) or 0)
                 min_stock = float(p.get("minStock", 10) or 10)
                 if qty <= min_stock:
@@ -179,6 +172,22 @@ async def _stock_alert_job():
                         "quantity": qty,
                         "minStock": min_stock,
                     })
+
+            # Indexed query — products explicitly owned by this user
+            try:
+                for doc in db.collection("products").where("createdBy", "==", uid).stream():
+                    _check_product(doc.id, doc.to_dict())
+            except Exception as qe:
+                logger.warning("Scheduler: products indexed query failed for %s: %s", uid, qe)
+
+            # Legacy scan — products written before createdBy was enforced
+            try:
+                for doc in db.collection("products").stream():
+                    p = doc.to_dict()
+                    if "createdBy" not in p:
+                        _check_product(doc.id, p)
+            except Exception as se:
+                logger.warning("Scheduler: products legacy scan failed for %s: %s", uid, se)
             if problem_products:
                 await email_service.send_stock_alert(problem_products, recipient, business_name)
         except Exception as exc:
@@ -190,6 +199,16 @@ class ReportScheduler:
         self.scheduler = AsyncIOScheduler()
 
     def start(self):
+        # Cloud Run scales to zero, so APScheduler jobs will silently miss their
+        # windows. Use Google Cloud Scheduler → POST /api/internal/trigger/{report_type}.
+        if os.environ.get("K_SERVICE"):
+            logger.info(
+                "Cloud Run detected (K_SERVICE=%s) — APScheduler disabled. "
+                "Configure Google Cloud Scheduler to POST /api/internal/trigger/{daily|weekly|monthly|stock_alert}.",
+                os.environ["K_SERVICE"],
+            )
+            return
+
         # Daily P&L — 8 PM UTC every day
         self.scheduler.add_job(
             _daily_job, CronTrigger(hour=20, minute=0),

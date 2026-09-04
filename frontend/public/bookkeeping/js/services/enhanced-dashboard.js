@@ -100,6 +100,9 @@ export class EnhancedDashboard {
         // COGS calculation
         const cogs = this.calculateCOGS(currentSales);
         const grossProfit = revenue - cogs;
+        // Supplier payments (liability_payment) are balance-sheet events — the cost was already
+        // captured in COGS via sale.cost at POS. Deducting them again would double-count.
+        // debtPayments is retained in the return object for cash-flow visibility only.
         const netProfit = grossProfit - expenses;
         const prevNetProfit = this.calculateRevenue(prevSales) - this.calculateCOGS(prevSales) - prevExpensesTotal;
         const profitChange = prevNetProfit !== 0 ? ((netProfit - prevNetProfit) / Math.abs(prevNetProfit) * 100) : 0;
@@ -951,10 +954,17 @@ export class EnhancedDashboard {
     }
 
     calculateCOGS(sales) {
+        const productCostMap = Object.fromEntries(
+            (this.state?.allProducts || []).map(p => [p.name, parseFloat(p.cost) || 0])
+        );
         return sales.reduce((sum, s) => {
-            const product = (this.state?.allProducts || []).find(p => p.name === s.product);
-            const cost = product ? product.cost : (s.cost || 0);
-            return sum + ((s.quantity || 0) * cost);
+            const qty = parseFloat(s.quantity) || 0;
+            // Prefer sale-time cost snapshot; fall back to current product cost
+            const snapshot = parseFloat(s.cost);
+            const cost = (Number.isFinite(snapshot) && snapshot > 0)
+                ? snapshot
+                : (productCostMap[s.product] ?? 0);
+            return sum + qty * cost;
         }, 0);
     }
 

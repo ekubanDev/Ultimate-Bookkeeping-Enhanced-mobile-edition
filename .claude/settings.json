@@ -12,7 +12,21 @@
       "Bash(python3 /tmp/uipro/src/ui-ux-pro-max/scripts/search.py \"revenue profit expense category breakdown\" --domain chart -n 5)",
       "Bash(python3 /tmp/uipro/src/ui-ux-pro-max/scripts/search.py \"SMB bookkeeping invoice receipt\" --domain landing -n 5)",
       "Bash(python3 /tmp/uipro/src/ui-ux-pro-max/scripts/search.py \"part proportion donut pie category share\" --domain chart -n 5)",
-      "Bash(python3 /tmp/uipro/src/ui-ux-pro-max/scripts/search.py \"modal dialog confirm destructive action\" --domain ux -n 8)"
+      "Bash(python3 /tmp/uipro/src/ui-ux-pro-max/scripts/search.py \"modal dialog confirm destructive action\" --domain ux -n 8)",
+      "Bash(git -C /Users/ekubanelijah/Documents/Emergent/Ultimate-Bookkeeping-Enhanced-mobile-edition log --all --full-history -- \"*.env\")",
+      "Bash(rsync -av /Users/ekubanelijah/Documents/Emergent/Ultimate-Bookkeeping-Enhanced-mobile-edition/frontend/public/bookkeeping/js/services/enhanced-dashboard.js /Users/ekubanelijah/Documents/Emergent/Ultimate-Bookkeeping-Enhanced-mobile-edition/frontend/build/bookkeeping/js/services/enhanced-dashboard.js)",
+      "Bash(rsync -av /Users/ekubanelijah/Documents/Emergent/Ultimate-Bookkeeping-Enhanced-mobile-edition/frontend/public/bookkeeping/js/services/profit-analysis.js /Users/ekubanelijah/Documents/Emergent/Ultimate-Bookkeeping-Enhanced-mobile-edition/frontend/build/bookkeeping/js/services/profit-analysis.js)",
+      "Bash(echo \"diff exit: $?\")",
+      "Bash(md5 frontend/public/bookkeeping/js/services/enhanced-dashboard.js frontend/build/bookkeeping/js/services/enhanced-dashboard.js)",
+      "Bash(md5 frontend/public/bookkeeping/js/services/profit-analysis.js frontend/build/bookkeeping/js/services/profit-analysis.js)",
+      "Bash(grep -c '^    [a-zA-Z_][a-zA-Z0-9_]*\\(.*\\) *{$\\\\|^    async [a-zA-Z_]' /Users/ekubanelijah/Documents/Emergent/Ultimate-Bookkeeping-Enhanced-mobile-edition/frontend/public/bookkeeping/js/controllers/app-controller.js)",
+      "Bash(grep -noE '^\\\\s{2,4}\\(async \\)?[a-zA-Z_$][a-zA-Z0-9_$]*\\\\s*\\\\\\(' /Users/ekubanelijah/Documents/Emergent/Ultimate-Bookkeeping-Enhanced-mobile-edition/frontend/public/bookkeeping/js/controllers/app-controller.js)",
+      "Bash(grep -c \"^    [a-zA-Z_$][a-zA-Z0-9_]*\\\\s*\\(\" /Users/ekubanelijah/Documents/Emergent/Ultimate-Bookkeeping-Enhanced-mobile-edition/frontend/public/bookkeeping/js/controllers/app-controller.js)",
+      "Bash(awk -F'==' '{print \\(NF==1\\)?\"UNPINNED: \"$0:\"pinned: \"$0}')",
+      "Bash(xargs -I{} sh -c 'echo ==={}===; cat {}')",
+      "Bash(grep -n '\\\\${.*\\\\.name}\\\\|\\\\${.*\\\\.description}\\\\|\\\\${.*\\\\.notes}\\\\|\\\\${.*\\\\.category}\\\\|\\\\${.*\\\\.customerName}\\\\|\\\\${.*\\\\.supplierName}' /Users/ekubanelijah/Documents/Emergent/Ultimate-Bookkeeping-Enhanced-mobile-edition/frontend/public/bookkeeping/js/controllers/app-controller.js)",
+      "Bash(find /Users/ekubanelijah/Documents/Emergent/Ultimate-Bookkeeping-Enhanced-mobile-edition/frontend/public/bookkeeping -name *.css)",
+      "Bash(grep -v \"\\\\.js['\\\\\"]$\")"
     ]
   },
   "enabledPlugins": {

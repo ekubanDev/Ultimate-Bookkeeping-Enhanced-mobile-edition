@@ -403,8 +403,7 @@ def _tool_get_financial_summary(uid: str, start: Optional[str], end: Optional[st
     uncategorised = [e for e in operating_expenses if not e.get("category")]
 
     gross_profit     = revenue - cogs
-    operating_profit = gross_profit - total_opex
-    net_profit       = operating_profit - total_debt
+    net_profit       = gross_profit - total_opex
     gross_margin     = (gross_profit / revenue * 100) if revenue else 0
     net_margin       = (net_profit   / revenue * 100) if revenue else 0
 
@@ -415,8 +414,7 @@ def _tool_get_financial_summary(uid: str, start: Optional[str], end: Optional[st
         "gross_profit":              round(gross_profit, 2),
         "gross_margin_pct":          round(gross_margin, 1),
         "operating_expenses":        round(total_opex, 2),
-        "operating_profit":          round(operating_profit, 2),
-        "debt_payments":             round(total_debt, 2),
+        "supplier_payments":         round(total_debt, 2),
         "net_profit":                round(net_profit, 2),
         "net_profit_margin_pct":     round(net_margin, 1),
         "total_sales_transactions":  len(period_sales),
