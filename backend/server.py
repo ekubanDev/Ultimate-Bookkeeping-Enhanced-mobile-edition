@@ -182,6 +182,19 @@ async def _ai_chat_with_openai_tools(
     return "The assistant took too many steps. Please try a simpler question."
 
 
+def _degraded_chat_response(snapshot: Dict[str, Any]) -> Dict[str, Any]:
+    """Graceful response when the LLM is unreachable (quota, timeout, upstream error)."""
+    return {
+        "response": (
+            "The AI assistant is temporarily unavailable. Your business data is unaffected — "
+            "the dashboard, reports and analytics all continue to work normally. "
+            "Please try again shortly."
+        ),
+        "agent_mode": "degraded",
+        "snapshot_meta": snapshot.get("computed_at"),
+    }
+
+
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
@@ -434,36 +447,42 @@ Provide:
 
 Format your response as JSON with keys: summary, recommendations (array), alerts (array), trend"""
 
-            response = await call_llm(
-                api_key=api_key,
-                system_message=(
-                    "You are a professional business analyst for retail and inventory. This business operates in Ghana; use ₵ (GHS) only, never $. "
-                    "The payload uses dashboard-aligned math: net profit subtracts COGS (from product costs) and operating expenses. "
-                    "Never equate Total Revenue with Net Profit."
-                ),
-                prompt=prompt,
-            )
-
             try:
-                json_start = response.find('{')
-                json_end = response.rfind('}') + 1
-                if json_start >= 0 and json_end > json_start:
-                    parsed = json.loads(response[json_start:json_end])
-                    return AIInsightsResponse(
-                        insights=parsed.get('summary', response),
-                        recommendations=parsed.get('recommendations', []),
-                        alerts=parsed.get('alerts', []),
-                        forecast={"trend": parsed.get('trend', 'stable')}
-                    )
-            except json.JSONDecodeError:
-                pass
+                response = await call_llm(
+                    api_key=api_key,
+                    system_message=(
+                        "You are a professional business analyst for retail and inventory. This business operates in Ghana; use ₵ (GHS) only, never $. "
+                        "The payload uses dashboard-aligned math: net profit subtracts COGS (from product costs) and operating expenses. "
+                        "Never equate Total Revenue with Net Profit."
+                    ),
+                    prompt=prompt,
+                )
 
-            return AIInsightsResponse(
-                insights=response[:500],
-                recommendations=["Review low stock items", "Analyze expense patterns", "Focus on top-selling products"],
-                alerts=["Low stock alert" if low_stock_count > 0 else ""],
-                forecast={"trend": "stable"}
-            )
+                try:
+                    json_start = response.find('{')
+                    json_end = response.rfind('}') + 1
+                    if json_start >= 0 and json_end > json_start:
+                        parsed = json.loads(response[json_start:json_end])
+                        return AIInsightsResponse(
+                            insights=parsed.get('summary', response),
+                            recommendations=parsed.get('recommendations', []),
+                            alerts=parsed.get('alerts', []),
+                            forecast={"trend": parsed.get('trend', 'stable')}
+                        )
+                except json.JSONDecodeError:
+                    pass
+
+                return AIInsightsResponse(
+                    insights=response[:500],
+                    recommendations=["Review low stock items", "Analyze expense patterns", "Focus on top-selling products"],
+                    alerts=["Low stock alert" if low_stock_count > 0 else ""],
+                    forecast={"trend": "stable"}
+                )
+            except Exception as llm_exc:
+                # LLM unavailable (quota exhausted, timeout, upstream error). Fall through to the
+                # deterministic rule-based insights below — those figures are already computed
+                # from the same math the dashboard uses, so the panel still shows real numbers.
+                logger.warning("AI insights LLM call failed; serving rule-based insights: %s", llm_exc)
 
         # Fallback: rule-based insights when AI key is not set
         recommendations = []
@@ -532,13 +551,13 @@ Provide a JSON response with:
 3. confidence: "high", "medium", or "low"
 4. factors: array of factors affecting the forecast"""
 
-            response = await call_llm(
-                api_key=api_key,
-                system_message="You are a sales forecasting expert. Provide data-driven predictions. This business operates in Ghana. Always use the Ghana Cedi symbol ₵ (GHS) for all monetary values, never $.",
-                prompt=prompt
-            )
-
             try:
+                response = await call_llm(
+                    api_key=api_key,
+                    system_message="You are a sales forecasting expert. Provide data-driven predictions. This business operates in Ghana. Always use the Ghana Cedi symbol ₵ (GHS) for all monetary values, never $.",
+                    prompt=prompt
+                )
+
                 json_start = response.find('{')
                 json_end = response.rfind('}') + 1
                 if json_start >= 0 and json_end > json_start:
@@ -550,8 +569,8 @@ Provide a JSON response with:
                         "factors": parsed.get('factors', []),
                         "forecast_period": request.forecast_days
                     }
-            except Exception:
-                pass
+            except Exception as llm_exc:
+                logger.warning("Forecast LLM call failed; serving rule-based forecast: %s", llm_exc)
 
         # Rule-based fallback
         older_avg = sum(v for _, v in sorted_sales[-14:-7]) / min(7, max(1, len(sorted_sales) - 7)) if len(sorted_sales) > 7 else recent_avg
@@ -896,20 +915,28 @@ Structured business metrics (from client-loaded data; use for factual answers):
 
 Provide a helpful, concise response focused on actionable business advice. For inventory and restock questions, cite specific products from the structured metrics when relevant."""
 
-            response = await call_llm(
-                api_key=api_key,
-                system_message=system_message,
-                prompt=prompt,
-            )
+            try:
+                response = await call_llm(
+                    api_key=api_key,
+                    system_message=system_message,
+                    prompt=prompt,
+                )
+            except Exception as llm_exc:
+                logger.warning("AI chat LLM call failed: %s", llm_exc)
+                return _degraded_chat_response(snapshot)
             return {"response": response, "agent_mode": "snapshot_prompt", "snapshot_meta": snapshot.get("computed_at")}
 
-        response = await _ai_chat_with_openai_tools(
-            api_key=api_key,
-            system_message=system_message,
-            user_question=f"Summary context:\n{context_block}\n\nQuestion:\n{question}",
-            snapshot_json=snapshot_json,
-            history=history,
-        )
+        try:
+            response = await _ai_chat_with_openai_tools(
+                api_key=api_key,
+                system_message=system_message,
+                user_question=f"Summary context:\n{context_block}\n\nQuestion:\n{question}",
+                snapshot_json=snapshot_json,
+                history=history,
+            )
+        except Exception as llm_exc:
+            logger.warning("AI chat LLM call failed: %s", llm_exc)
+            return _degraded_chat_response(snapshot)
         return {"response": response, "agent_mode": "openai_tools", "snapshot_meta": snapshot.get("computed_at")}
 
     except HTTPException:
@@ -1197,7 +1224,11 @@ async def ai_po_suggest(data: Dict[str, Any], authorization: Optional[str] = Hea
             + "\n\nRespond with ONLY the JSON array. No other text."
         )
 
-        raw_response = await call_llm(api_key=api_key, system_message=system_message, prompt=prompt)
+        try:
+            raw_response = await call_llm(api_key=api_key, system_message=system_message, prompt=prompt)
+        except Exception as llm_exc:
+            logger.warning("po-suggest LLM call failed; serving rule-based quantities: %s", llm_exc)
+            return {"suggestions": rule_based(products), "mode": "rule_based_fallback"}
 
         # Parse with multiple fallback strategies
         suggestions = None
